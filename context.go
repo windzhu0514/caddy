@@ -25,6 +25,10 @@ import (
 	"go.uber.org/zap"
 )
 
+// Context定义了这些模块的生命周期：已加载且提供对了产生这些已加载模块的父配置的访问的模块
+// 应该小心使用Context，当不在需要Caddy的某些特性时可以使用标准库的context包的派生函数进行包装
+// context会在从contexts加载的模块生命周期结束时取消
+
 // Context is a type which defines the lifetime of modules that
 // are loaded and provides access to the parent configuration
 // that spawned the modules which are loaded. It should be used
@@ -79,6 +83,8 @@ func NewContext(ctx Context) (Context, context.CancelFunc) {
 func (ctx *Context) OnCancel(f func()) {
 	ctx.cleanupFuncs = append(ctx.cleanupFuncs, f)
 }
+
+// 加载、初始化模块，验证配置信息
 
 // LoadModule loads the Caddy module(s) from the specified field of the parent struct
 // pointer and returns the loaded module(s). The struct pointer and its field name as
@@ -351,6 +357,13 @@ func (ctx Context) LoadModuleByID(id string, rawMsg json.RawMessage) (interface{
 
 	return val, nil
 }
+
+// LoadModuleInline从解码为map[string]interface{}的JSON raw message加载一个模块
+// 该模块在map中的key是moduleNameKey，模块名是对应的字符串值，并且该模块名可以在给定的
+// 模块分类中找到
+// 当这些模块名在map中不是唯一的时候，比如map中或者数组里存在多个相同实例，这样的加载方式
+// 可以让给定名称模块解码到对应的具体类型从而可以使用。换句话说：包含模块名的key和其他的
+// key是区别对待的
 
 // loadModuleInline loads a module from a JSON raw message which decodes to
 // a map[string]interface{}, where one of the object keys is moduleNameKey

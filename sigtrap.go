@@ -21,6 +21,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// TrapSignals尽可能的为当前系统创建正确的signal/interrupt处理。在已经有信号
+// 捕获处理的程序中使用这个函数是侵入性的，每个捕获处理都会收到信号通知，导致出
+// 现异常，这种情况最好自行实现对应的处理。
 // TrapSignals create signal/interrupt handlers as best it can for the
 // current OS. This is a rather invasive function to call in a Go program
 // that captures signals already, so in that case it would be better to
@@ -38,6 +41,8 @@ func trapSignalsCrossPlatform() {
 		shutdown := make(chan os.Signal, 1)
 		signal.Notify(shutdown, os.Interrupt)
 
+		// 收到一次os.Interrupt信号（ctrl+c）,开始正常退出，收到多次则直接退出程序
+		// 该协程随着主程序的结束而结束
 		for i := 0; true; i++ {
 			<-shutdown
 

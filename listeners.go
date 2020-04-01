@@ -92,6 +92,11 @@ func ListenPacket(network, addr string) (net.PacketConn, error) {
 	return &fakeClosePacketConn{usage: &lnGlobal.usage, key: lnKey, PacketConn: pc}, nil
 }
 
+// fakeCloseListener的Close()方法并不是真的关闭Listener。
+// 这样就可以让使用了listener的服务在关闭时不释放连接
+// 因此服务可以保持listener运行的同时完成替换
+// 需要重用的listener都应该使用fakeCloseListener进行封装
+
 // fakeCloseListener's Close() method is a no-op. This allows
 // stopping servers that are using the listener without giving
 // up the socket; thus, servers become hot-swappable while the
@@ -138,6 +143,8 @@ func (fcl *fakeCloseListener) Accept() (net.Conn, error) {
 	fcl.deadlineMu.Unlock()
 
 	if atomic.LoadInt32(&fcl.closed) == 1 {
+		// 如果我们通过在listener上设置deadline让Accept()取消，就必须确保Accecpt()的所有调用者都认为listener
+		// 实际上已经关闭；如果返回超时错误，调用者可能会重试，导致goroutines需要更长的时间结束。
 		// if we canceled the Accept() by setting a deadline
 		// on the listener, we need to make sure any callers of
 		// Accept() think the listener was actually closed;
@@ -151,11 +158,14 @@ func (fcl *fakeCloseListener) Accept() (net.Conn, error) {
 	return nil, err
 }
 
+// Close方法标记Listener不再接受新的连接而不是关闭Listener，除非这个Listener已不在使用
 // Close stops accepting new connections without
 // closing the underlying listener, unless no one
 // else is using it.
 func (fcl *fakeCloseListener) Close() error {
 	if atomic.CompareAndSwapInt32(&fcl.closed, 0, 1) {
+		// 不幸的是没有办法取消因正在等待连接而正处于阻塞状态的Accept()调用，因为我们不是真的要关闭它；
+		// 因此我们通过设置一个已过去的截止时间，强制这个调用超时；这种方法只适用于特定类型的listener
 		// unfortunately, there is no way to cancel any
 		// currently-blocking calls to Accept() that are
 		// awaiting connections since we're not actually

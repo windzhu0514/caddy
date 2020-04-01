@@ -90,6 +90,7 @@ type ModuleInfo struct {
 // - caddy.logging.encoders.json
 type ModuleID string
 
+// 最后一个点前面的是命名空间
 // Namespace returns the namespace (or scope) portion of a module ID,
 // which is all but the last label of the ID. If the ID has only one
 // label, then the namespace is empty.
@@ -101,6 +102,7 @@ func (id ModuleID) Namespace() string {
 	return string(id)[:lastDot]
 }
 
+// 最后一个点后面的是ID
 // Name returns the Name (last element) of a module ID.
 func (id ModuleID) Name() string {
 	if id == "" {
@@ -186,6 +188,7 @@ func GetModuleID(instance interface{}) string {
 	return id
 }
 
+// 返回在命令空间下的所有模块
 // GetModules returns all modules in the given scope/namespace.
 // For example, a scope of "foo" returns modules named "foo.bar",
 // "foo.loo", but not "bar", "foo.bar.loo", etc. An empty scope
