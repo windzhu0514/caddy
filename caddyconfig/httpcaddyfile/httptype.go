@@ -17,7 +17,6 @@ package httpcaddyfile
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"reflect"
 	"sort"
 	"strconv"
@@ -320,47 +319,6 @@ func (ServerType) evaluateGlobalOptionsBlock(serverBlocks []serverBlock, options
 	return serverBlocks[1:], nil
 }
 
-// hostsFromServerBlockKeys returns a list of all the non-empty hostnames
-// found in the keys of the server block sb, unless allowEmpty is true, in
-// which case a key with no host (e.g. ":443") will be added to the list as
-// an empty string. Otherwise, if allowEmpty is false, and if sb has a key
-// that omits the hostname (i.e. is a catch-all/empty host), then the returned
-// list is empty, because the server block effectively matches ALL hosts.
-// The list may not be in a consistent order. If includePorts is true, then
-// any non-empty, non-standard ports will be included.
-func (st *ServerType) hostsFromServerBlockKeys(sb caddyfile.ServerBlock, allowEmpty, includePorts bool) ([]string, error) {
-	// first get each unique hostname
-	hostMap := make(map[string]struct{})
-	for _, sblockKey := range sb.Keys {
-		addr, err := ParseAddress(sblockKey)
-		if err != nil {
-			return nil, fmt.Errorf("parsing server block key: %v", err)
-		}
-		addr = addr.Normalize()
-		if addr.Host == "" && !allowEmpty {
-			// server block contains a key like ":443", i.e. the host portion
-			// is empty / catch-all, which means to match all hosts
-			return []string{}, nil
-		}
-		if includePorts &&
-			addr.Port != "" &&
-			addr.Port != strconv.Itoa(caddyhttp.DefaultHTTPPort) &&
-			addr.Port != strconv.Itoa(caddyhttp.DefaultHTTPSPort) {
-			hostMap[net.JoinHostPort(addr.Host, addr.Port)] = struct{}{}
-		} else {
-			hostMap[addr.Host] = struct{}{}
-		}
-	}
-
-	// convert map to slice
-	sblockHosts := make([]string, 0, len(hostMap))
-	for host := range hostMap {
-		sblockHosts = append(sblockHosts, host)
-	}
-
-	return sblockHosts, nil
-}
-
 // serversFromPairings creates the servers for each pairing of addresses
 // to server blocks. Each pairing is essentially a server definition.
 func (st *ServerType) serversFromPairings(
@@ -384,11 +342,10 @@ func (st *ServerType) serversFromPairings(
 		// descending sort by length of host then path
 		sort.SliceStable(p.serverBlocks, func(i, j int) bool {
 			// TODO: we could pre-process the specificities for efficiency,
-			// but I don't expect many blocks will have SO many keys...
+			// but I don't expect many blocks will have THAT many keys...
 			var iLongestPath, jLongestPath string
 			var iLongestHost, jLongestHost string
-			for _, key := range p.serverBlocks[i].block.Keys {
-				addr, _ := ParseAddress(key)
+			for _, addr := range p.serverBlocks[i].keys {
 				if specificity(addr.Host) > specificity(iLongestHost) {
 					iLongestHost = addr.Host
 				}
@@ -396,8 +353,7 @@ func (st *ServerType) serversFromPairings(
 					iLongestPath = addr.Path
 				}
 			}
-			for _, key := range p.serverBlocks[j].block.Keys {
-				addr, _ := ParseAddress(key)
+			for _, addr := range p.serverBlocks[j].keys {
 				if specificity(addr.Host) > specificity(jLongestHost) {
 					jLongestHost = addr.Host
 				}
@@ -415,15 +371,12 @@ func (st *ServerType) serversFromPairings(
 
 		// create a subroute for each site in the server block
 		for _, sblock := range p.serverBlocks {
-			matcherSetsEnc, err := st.compileEncodedMatcherSets(sblock.block)
+			matcherSetsEnc, err := st.compileEncodedMatcherSets(sblock)
 			if err != nil {
 				return nil, fmt.Errorf("server block %v: compiling matcher sets: %v", sblock.block.Keys, err)
 			}
 
-			hosts, err := st.hostsFromServerBlockKeys(sblock.block, false, false)
-			if err != nil {
-				return nil, err
-			}
+			hosts := sblock.hostsFromKeys(false, false)
 
 			// tls: connection policies
 			if cpVals, ok := sblock.pile["tls.connection_policy"]; ok {
@@ -455,12 +408,7 @@ func (st *ServerType) serversFromPairings(
 
 			// exclude any hosts that were defined explicitly with
 			// "http://" in the key from automated cert management (issue #2998)
-			for _, key := range sblock.block.Keys {
-				addr, err := ParseAddress(key)
-				if err != nil {
-					return nil, err
-				}
-				addr = addr.Normalize()
+			for _, addr := range sblock.keys {
 				if addr.Scheme == "http" && addr.Host != "" {
 					if srv.AutoHTTPS == nil {
 						srv.AutoHTTPS = new(caddyhttp.AutoHTTPSConfig)
@@ -500,14 +448,19 @@ func (st *ServerType) serversFromPairings(
 						LoggerNames: make(map[string]string),
 					}
 				}
-				hosts, err := st.hostsFromServerBlockKeys(sblock.block, true, true)
-				if err != nil {
-					return nil, err
-				}
-				for _, h := range hosts {
-					srv.Logs.LoggerNames[h] = ncl.name
+				for _, h := range sblock.hostsFromKeys(true, true) {
+					if ncl.name != "" {
+						srv.Logs.LoggerNames[h] = ncl.name
+					}
 				}
 			}
+		}
+
+		// a server cannot (natively) serve both HTTP and HTTPS at the
+		// same time, so make sure the configuration isn't in conflict
+		err := detectConflictingSchemes(srv, p.serverBlocks, options)
+		if err != nil {
+			return nil, err
 		}
 
 		// a catch-all TLS conn policy is necessary to ensure TLS can
@@ -527,7 +480,10 @@ func (st *ServerType) serversFromPairings(
 		}
 
 		// tidy things up a bit
-		srv.TLSConnPolicies = consolidateConnPolicies(srv.TLSConnPolicies)
+		srv.TLSConnPolicies, err = consolidateConnPolicies(srv.TLSConnPolicies)
+		if err != nil {
+			return nil, fmt.Errorf("consolidating TLS connection policies for server %d: %v", i, err)
+		}
 		srv.Routes = consolidateRoutes(srv.Routes)
 
 		servers[fmt.Sprintf("srv%d", i)] = srv
@@ -536,10 +492,80 @@ func (st *ServerType) serversFromPairings(
 	return servers, nil
 }
 
-// consolidateConnPolicies combines TLS connection policies that are the same,
-// for a cleaner overall output.
-func consolidateConnPolicies(cps caddytls.ConnectionPolicies) caddytls.ConnectionPolicies {
+func detectConflictingSchemes(srv *caddyhttp.Server, serverBlocks []serverBlock, options map[string]interface{}) error {
+	httpPort := strconv.Itoa(caddyhttp.DefaultHTTPPort)
+	if hp, ok := options["http_port"].(int); ok {
+		httpPort = strconv.Itoa(hp)
+	}
+	httpsPort := strconv.Itoa(caddyhttp.DefaultHTTPSPort)
+	if hsp, ok := options["https_port"].(int); ok {
+		httpsPort = strconv.Itoa(hsp)
+	}
+
+	var httpOrHTTPS string
+	checkAndSetHTTP := func(addr Address) error {
+		if httpOrHTTPS == "HTTPS" {
+			errMsg := fmt.Errorf("server listening on %v is configured for HTTPS and cannot natively multiplex HTTP and HTTPS: %s",
+				srv.Listen, addr.Original)
+			if addr.Scheme == "" && addr.Host == "" {
+				errMsg = fmt.Errorf("%s (try specifying https:// in the address)", errMsg)
+			}
+			return errMsg
+		}
+		if len(srv.TLSConnPolicies) > 0 {
+			// any connection policies created for an HTTP server
+			// is a logical conflict, as it would enable HTTPS
+			return fmt.Errorf("server listening on %v is HTTP, but attempts to configure TLS connection policies", srv.Listen)
+		}
+		httpOrHTTPS = "HTTP"
+		return nil
+	}
+	checkAndSetHTTPS := func(addr Address) error {
+		if httpOrHTTPS == "HTTP" {
+			return fmt.Errorf("server listening on %v is configured for HTTP and cannot natively multiplex HTTP and HTTPS: %s",
+				srv.Listen, addr.Original)
+		}
+		httpOrHTTPS = "HTTPS"
+		return nil
+	}
+
+	for _, sblock := range serverBlocks {
+		for _, addr := range sblock.keys {
+			if addr.Scheme == "http" || addr.Port == httpPort {
+				if err := checkAndSetHTTP(addr); err != nil {
+					return err
+				}
+			} else if addr.Scheme == "https" || addr.Port == httpsPort {
+				if err := checkAndSetHTTPS(addr); err != nil {
+					return err
+				}
+			} else if addr.Host == "" {
+				if err := checkAndSetHTTP(addr); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// consolidateConnPolicies removes empty TLS connection policies and combines
+// equivalent ones for a cleaner overall output.
+func consolidateConnPolicies(cps caddytls.ConnectionPolicies) (caddytls.ConnectionPolicies, error) {
+	empty := new(caddytls.ConnectionPolicy)
+
 	for i := 0; i < len(cps); i++ {
+		// if the connection policy is empty or has
+		// only matchers, we can remove it entirely
+		empty.MatchersRaw = cps[i].MatchersRaw
+		if reflect.DeepEqual(empty, cps[i]) {
+			cps = append(cps[:i], cps[i+1:]...)
+			i--
+			continue
+		}
+
+		// compare it to the others
 		for j := 0; j < len(cps); j++ {
 			if j == i {
 				continue
@@ -551,9 +577,106 @@ func consolidateConnPolicies(cps caddytls.ConnectionPolicies) caddytls.Connectio
 				i--
 				break
 			}
+
+			// if they have the same matcher, try to reconcile each field: either they must
+			// be identical, or we have to be able to combine them safely
+			if reflect.DeepEqual(cps[i].MatchersRaw, cps[j].MatchersRaw) {
+				if len(cps[i].ALPN) > 0 &&
+					len(cps[j].ALPN) > 0 &&
+					!reflect.DeepEqual(cps[i].ALPN, cps[j].ALPN) {
+					return nil, fmt.Errorf("two policies with same match criteria have conflicting ALPN: %v vs. %v",
+						cps[i].ALPN, cps[j].ALPN)
+				}
+				if len(cps[i].CipherSuites) > 0 &&
+					len(cps[j].CipherSuites) > 0 &&
+					!reflect.DeepEqual(cps[i].CipherSuites, cps[j].CipherSuites) {
+					return nil, fmt.Errorf("two policies with same match criteria have conflicting cipher suites: %v vs. %v",
+						cps[i].CipherSuites, cps[j].CipherSuites)
+				}
+				if cps[i].ClientAuthentication == nil &&
+					cps[j].ClientAuthentication != nil &&
+					!reflect.DeepEqual(cps[i].ClientAuthentication, cps[j].ClientAuthentication) {
+					return nil, fmt.Errorf("two policies with same match criteria have conflicting client auth configuration: %+v vs. %+v",
+						cps[i].ClientAuthentication, cps[j].ClientAuthentication)
+				}
+				if len(cps[i].Curves) > 0 &&
+					len(cps[j].Curves) > 0 &&
+					!reflect.DeepEqual(cps[i].Curves, cps[j].Curves) {
+					return nil, fmt.Errorf("two policies with same match criteria have conflicting curves: %v vs. %v",
+						cps[i].Curves, cps[j].Curves)
+				}
+				if cps[i].DefaultSNI != "" &&
+					cps[j].DefaultSNI != "" &&
+					cps[i].DefaultSNI != cps[j].DefaultSNI {
+					return nil, fmt.Errorf("two policies with same match criteria have conflicting default SNI: %s vs. %s",
+						cps[i].DefaultSNI, cps[j].DefaultSNI)
+				}
+				if cps[i].ProtocolMin != "" &&
+					cps[j].ProtocolMin != "" &&
+					cps[i].ProtocolMin != cps[j].ProtocolMin {
+					return nil, fmt.Errorf("two policies with same match criteria have conflicting min protocol: %s vs. %s",
+						cps[i].ProtocolMin, cps[j].ProtocolMin)
+				}
+				if cps[i].ProtocolMax != "" &&
+					cps[j].ProtocolMax != "" &&
+					cps[i].ProtocolMax != cps[j].ProtocolMax {
+					return nil, fmt.Errorf("two policies with same match criteria have conflicting max protocol: %s vs. %s",
+						cps[i].ProtocolMax, cps[j].ProtocolMax)
+				}
+				if cps[i].CertSelection != nil && cps[j].CertSelection != nil {
+					// merging fields other than AnyTag is not implemented
+					if !reflect.DeepEqual(cps[i].CertSelection.SerialNumber, cps[j].CertSelection.SerialNumber) ||
+						!reflect.DeepEqual(cps[i].CertSelection.SubjectOrganization, cps[j].CertSelection.SubjectOrganization) ||
+						cps[i].CertSelection.PublicKeyAlgorithm != cps[j].CertSelection.PublicKeyAlgorithm ||
+						!reflect.DeepEqual(cps[i].CertSelection.AllTags, cps[j].CertSelection.AllTags) {
+						return nil, fmt.Errorf("two policies with same match criteria have conflicting cert selections: %+v vs. %+v",
+							cps[i].CertSelection, cps[j].CertSelection)
+					}
+				}
+
+				// by now we've decided that we can merge the two -- we'll keep i and drop j
+
+				if len(cps[i].ALPN) == 0 && len(cps[j].ALPN) > 0 {
+					cps[i].ALPN = cps[j].ALPN
+				}
+				if len(cps[i].CipherSuites) == 0 && len(cps[j].CipherSuites) > 0 {
+					cps[i].CipherSuites = cps[j].CipherSuites
+				}
+				if cps[i].ClientAuthentication == nil && cps[j].ClientAuthentication != nil {
+					cps[i].ClientAuthentication = cps[j].ClientAuthentication
+				}
+				if len(cps[i].Curves) == 0 && len(cps[j].Curves) > 0 {
+					cps[i].Curves = cps[j].Curves
+				}
+				if cps[i].DefaultSNI == "" && cps[j].DefaultSNI != "" {
+					cps[i].DefaultSNI = cps[j].DefaultSNI
+				}
+				if cps[i].ProtocolMin == "" && cps[j].ProtocolMin != "" {
+					cps[i].ProtocolMin = cps[j].ProtocolMin
+				}
+				if cps[i].ProtocolMax == "" && cps[j].ProtocolMax != "" {
+					cps[i].ProtocolMax = cps[j].ProtocolMax
+				}
+
+				if cps[i].CertSelection == nil && cps[j].CertSelection != nil {
+					// if j is the only one with a policy, move it over to i
+					cps[i].CertSelection = cps[j].CertSelection
+				} else if cps[i].CertSelection != nil && cps[j].CertSelection != nil {
+					// if both have one, then combine AnyTag
+					for _, tag := range cps[j].CertSelection.AnyTag {
+						if !sliceContains(cps[i].CertSelection.AnyTag, tag) {
+							cps[i].CertSelection.AnyTag = append(cps[i].CertSelection.AnyTag, tag)
+						}
+					}
+				}
+
+				cps = append(cps[:j], cps[j+1:]...)
+				i--
+				break
+			}
 		}
 	}
-	return cps
+	return cps, nil
 }
 
 // appendSubrouteToRouteList appends the routes in subroute
@@ -563,18 +686,34 @@ func appendSubrouteToRouteList(routeList caddyhttp.RouteList,
 	matcherSetsEnc []caddy.ModuleMap,
 	p sbAddrAssociation,
 	warnings *[]caddyconfig.Warning) caddyhttp.RouteList {
+
+	// nothing to do if... there's nothing to do
+	if len(matcherSetsEnc) == 0 && len(subroute.Routes) == 0 && subroute.Errors == nil {
+		return routeList
+	}
+
 	if len(matcherSetsEnc) == 0 && len(p.serverBlocks) == 1 {
 		// no need to wrap the handlers in a subroute if this is
 		// the only server block and there is no matcher for it
 		routeList = append(routeList, subroute.Routes...)
 	} else {
-		routeList = append(routeList, caddyhttp.Route{
-			MatcherSetsRaw: matcherSetsEnc,
-			HandlersRaw: []json.RawMessage{
+		route := caddyhttp.Route{
+			// the semantics of a site block in the Caddyfile dictate
+			// that only the first matching one is evaluated, since
+			// site blocks do not cascade nor inherit
+			Terminal: true,
+		}
+		if len(matcherSetsEnc) > 0 {
+			route.MatcherSetsRaw = matcherSetsEnc
+		}
+		if len(subroute.Routes) > 0 || subroute.Errors != nil {
+			route.HandlersRaw = []json.RawMessage{
 				caddyconfig.JSONModuleObject(subroute, "handler", "subroute", warnings),
-			},
-			Terminal: true, // only first matching site block should be evaluated
-		})
+			}
+		}
+		if len(route.MatcherSetsRaw) > 0 || len(route.HandlersRaw) > 0 {
+			routeList = append(routeList, route)
+		}
 	}
 	return routeList
 }
@@ -721,7 +860,7 @@ func matcherSetFromMatcherToken(
 	return nil, false, nil
 }
 
-func (st *ServerType) compileEncodedMatcherSets(sblock caddyfile.ServerBlock) ([]caddy.ModuleMap, error) {
+func (st *ServerType) compileEncodedMatcherSets(sblock serverBlock) ([]caddy.ModuleMap, error) {
 	type hostPathPair struct {
 		hostm caddyhttp.MatchHost
 		pathm caddyhttp.MatchPath
@@ -731,13 +870,7 @@ func (st *ServerType) compileEncodedMatcherSets(sblock caddyfile.ServerBlock) ([
 	var matcherPairs []*hostPathPair
 
 	var catchAllHosts bool
-	for _, key := range sblock.Keys {
-		addr, err := ParseAddress(key)
-		if err != nil {
-			return nil, fmt.Errorf("server block %v: parsing and standardizing address '%s': %v", sblock.Keys, key, err)
-		}
-		addr = addr.Normalize()
-
+	for _, addr := range sblock.keys {
 		// choose a matcher pair that should be shared by this
 		// server block; if none exists yet, create one
 		var chosenMatcherPair *hostPathPair
@@ -804,7 +937,7 @@ func (st *ServerType) compileEncodedMatcherSets(sblock caddyfile.ServerBlock) ([
 	for _, ms := range matcherSets {
 		msEncoded, err := encodeMatcherSet(ms)
 		if err != nil {
-			return nil, fmt.Errorf("server block %v: %v", sblock.Keys, err)
+			return nil, fmt.Errorf("server block %v: %v", sblock.block.Keys, err)
 		}
 		matcherSetsEnc = append(matcherSetsEnc, msEncoded)
 	}
