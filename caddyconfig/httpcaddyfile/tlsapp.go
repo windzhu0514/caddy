@@ -16,6 +16,7 @@ package httpcaddyfile
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
@@ -53,7 +54,7 @@ func (st ServerType) buildTLSApp(
 							continue
 						}
 						if otherAddr.Host != "" {
-							hostsSharedWithHostlessKey[addr.Host] = struct{}{}
+							hostsSharedWithHostlessKey[otherAddr.Host] = struct{}{}
 						}
 					}
 					break
@@ -72,7 +73,7 @@ func (st ServerType) buildTLSApp(
 			// get values that populate an automation policy for this block
 			var ap *caddytls.AutomationPolicy
 
-			sblockHosts := sblock.hostsFromKeys(false, false)
+			sblockHosts := sblock.hostsFromKeys(false)
 			if len(sblockHosts) == 0 {
 				ap = catchAllAP
 			}
@@ -245,7 +246,7 @@ func (st ServerType) buildTLSApp(
 				}
 				clVal := reflect.ValueOf(cl)
 				for i := 0; i < clVal.Len(); i++ {
-					combined = reflect.Append(reflect.Value(combined), clVal.Index(i))
+					combined = reflect.Append(combined, clVal.Index(i))
 				}
 				loadersByName[name] = combined.Interface().(caddytls.CertificateLoader)
 			}
@@ -263,6 +264,33 @@ func (st ServerType) buildTLSApp(
 		tlsApp.Automation.OnDemand = onDemand
 	}
 
+	// if any hostnames appear on the same server block as a key with
+	// no host, they will not be used with route matchers because the
+	// hostless key matches all hosts, therefore, it wouldn't be
+	// considered for auto-HTTPS, so we need to make sure those hosts
+	// are manually considered for managed certificates; we also need
+	// to make sure that any of these names which are internal-only
+	// get internal certificates by default rather than ACME
+	var al caddytls.AutomateLoader
+	internalAP := &caddytls.AutomationPolicy{
+		IssuerRaw: json.RawMessage(`{"module":"internal"}`),
+	}
+	for h := range hostsSharedWithHostlessKey {
+		al = append(al, h)
+		if !certmagic.SubjectQualifiesForPublicCert(h) {
+			internalAP.Subjects = append(internalAP.Subjects, h)
+		}
+	}
+	if len(al) > 0 {
+		tlsApp.CertificatesRaw["automate"] = caddyconfig.JSON(al, &warnings)
+	}
+	if len(internalAP.Subjects) > 0 {
+		if tlsApp.Automation == nil {
+			tlsApp.Automation = new(caddytls.AutomationConfig)
+		}
+		tlsApp.Automation.Policies = append(tlsApp.Automation.Policies, internalAP)
+	}
+
 	// if there is a global/catch-all automation policy, ensure it goes last
 	if catchAllAP != nil {
 		// first, encode its issuer
@@ -274,19 +302,6 @@ func (st ServerType) buildTLSApp(
 			tlsApp.Automation = new(caddytls.AutomationConfig)
 		}
 		tlsApp.Automation.Policies = append(tlsApp.Automation.Policies, catchAllAP)
-	}
-
-	// if any hostnames appear on the same server block as a key with
-	// no host, they will not be used with route matchers because the
-	// hostless key matches all hosts, therefore, it wouldn't be
-	// considered for auto-HTTPS, so we need to make sure those hosts
-	// are manually considered for managed certificates
-	var al caddytls.AutomateLoader
-	for h := range hostsSharedWithHostlessKey {
-		al = append(al, h)
-	}
-	if len(al) > 0 {
-		tlsApp.CertificatesRaw["automate"] = caddyconfig.JSON(al, &warnings)
 	}
 
 	// do a little verification & cleanup
@@ -322,8 +337,9 @@ func newBaseAutomationPolicy(options map[string]interface{}, warnings []caddycon
 	acmeCARoot, hasACMECARoot := options["acme_ca_root"]
 	email, hasEmail := options["email"]
 	localCerts, hasLocalCerts := options["local_certs"]
+	keyType, hasKeyType := options["key_type"]
 
-	hasGlobalAutomationOpts := hasACMECA || hasACMEDNS || hasACMECARoot || hasEmail || hasLocalCerts
+	hasGlobalAutomationOpts := hasACMECA || hasACMEDNS || hasACMECARoot || hasEmail || hasLocalCerts || hasKeyType
 
 	// if there are no global options related to automation policies
 	// set, then we can just return right away
@@ -362,6 +378,9 @@ func newBaseAutomationPolicy(options map[string]interface{}, warnings []caddycon
 		}
 		if acmeCARoot != nil {
 			mgr.TrustedRootsPEMFiles = []string{acmeCARoot.(string)}
+		}
+		if keyType != nil {
+			ap.KeyType = keyType.(string)
 		}
 		ap.Issuer = mgr // we'll encode it later
 	}
