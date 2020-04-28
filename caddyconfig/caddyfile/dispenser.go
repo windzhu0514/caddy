@@ -25,8 +25,8 @@ import (
 // Dispenser is invalid; call NewDispenser to make a proper instance.
 type Dispenser struct {
 	tokens  []Token
-	cursor  int
-	nesting int
+	cursor  int // 遍历索引
+	nesting int // 嵌套
 }
 
 // NewDispenser returns a Dispenser filled with the given tokens.
@@ -121,6 +121,9 @@ func (d *Dispenser) NextLine() bool {
 	return false
 }
 
+// NextBlock 可以用作for循环的判断条件来加载下一个token，只要已经遍历到
+// 一个配置块，或者已经在一个不是初始化嵌套等级的嵌套配置块中。
+// 换句话说
 // NextBlock can be used as the condition of a for loop
 // to load the next token as long as it opens a block or
 // is already in a block nested more than initialNestingLevel.

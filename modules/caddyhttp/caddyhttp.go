@@ -165,6 +165,9 @@ func (ws WeakString) String() string {
 	return string(ws)
 }
 
+// 请求返回的statuscode和配置的相同时返回true,配置的statuscode可以是具体的http status code
+// 也可以是以为代表一类status code的数字
+
 // StatusCodeMatches returns true if a real HTTP status code matches
 // the configured status code, which may be either a real HTTP status
 // code or an integer representing a class of codes (e.g. 4 for all

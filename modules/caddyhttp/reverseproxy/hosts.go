@@ -26,6 +26,8 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
 
+// Host代表一个可以被代理的远程的host，方法必须支持安全并发访问
+
 // Host represents a remote host which can be proxied to.
 // Its methods must be safe for concurrent use.
 type Host interface {
@@ -77,10 +79,14 @@ type Upstream struct {
 	// backends is down. Also be aware of open proxy vulnerabilities.
 	Dial string `json:"dial,omitempty"`
 
+	// 如果该上游服务使用DNS服务器的服务发现功能，请指定用于查找服务记录的DNS服务的名字而不是指定一个拨号地址
+
 	// If DNS SRV records are used for service discovery with this
 	// upstream, specify the DNS name for which to look up SRV
 	// records here, instead of specifying a dial address.
 	LookupSRV string `json:"lookup_srv,omitempty"`
+
+	// 允许访问该上游服务器的最大并发请求数量，该字段会覆盖全局的被动健康检查UnhealthyRequestCount的值
 
 	// The maximum number of simultaneous requests to allow to
 	// this upstream. If set, overrides the global passive health
@@ -227,6 +233,9 @@ func (uh *upstreamHost) SetHealthy(healthy bool) (bool, error) {
 	swapped := atomic.CompareAndSwapInt32(&uh.unhealthy, compare, unhealthy)
 	return swapped, nil
 }
+
+// DialInfo 包含创建到上游主机的连接需要的信息。这些信息可能和URL里表示的信息不一致，
+// （比如 unix sockets没有URL里host代表的字段，但是它有网络名称和地址）
 
 // DialInfo contains information needed to dial a
 // connection to an upstream host. This information

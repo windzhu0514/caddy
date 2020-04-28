@@ -20,6 +20,13 @@ import (
 	"sync/atomic"
 )
 
+// UsagePool是一个线程安全的map，用来缓存基于引用计数的值
+// 仅当值不存在时才会插入
+// 有两种把值插入缓存池的方法
+// LoadOrStore 增加引用同时如果值不存在则放入缓存池中
+// LoadOrNew 自动检查是否存在，如果值不存在就构造一个新值，否则增加引用计数，然后把新值放入池中
+// 当构造的值最后被删除时（引用计数为0）会调用Destruct方法进行清理
+
 // UsagePool is a thread-safe map that pools values
 // based on usage (reference counting). Values are
 // only inserted if they do not already exist. There

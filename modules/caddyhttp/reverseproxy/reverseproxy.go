@@ -39,6 +39,8 @@ func init() {
 	caddy.RegisterModule(Handler{})
 }
 
+// Handler实现了一个高可配产品级的反向代理
+
 // Handler implements a highly configurable and production-ready reverse proxy.
 //
 // Upon proxying, this module sets the following placeholders (which can be used
@@ -58,6 +60,8 @@ type Handler struct {
 	// is what performs the actual "round trip" to the backend.
 	// The default transport is plaintext HTTP.
 	TransportRaw json.RawMessage `json:"transport,omitempty" caddy:"namespace=http.reverse_proxy.transport inline_key=protocol"`
+
+	// 当后端出现压力或者延迟的迹象时，断路器可以减轻后端的压力
 
 	// A circuit breaker may be used to relieve pressure on a backend
 	// that is beginning to exhibit symptoms of stress or latency.
@@ -706,6 +710,7 @@ func removeConnectionHeaders(h http.Header) {
 	}
 }
 
+// 负载均衡
 // LoadBalancing has parameters related to load balancing.
 type LoadBalancing struct {
 	// A selection policy is how to choose an available backend.

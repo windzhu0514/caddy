@@ -31,6 +31,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// HealthChecks配置主动和被动健康检查
+
 // HealthChecks configures active and passive health checks.
 type HealthChecks struct {
 	// Active health checks run in the background on a timer. To
