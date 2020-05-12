@@ -383,12 +383,14 @@ func newBaseAutomationPolicy(options map[string]interface{}, warnings []caddycon
 		}
 		if acmeDNS != nil {
 			provName := acmeDNS.(string)
-			dnsProvModule, err := caddy.GetModule("tls.dns." + provName)
+			dnsProvModule, err := caddy.GetModule("dns.providers." + provName)
 			if err != nil {
 				return nil, fmt.Errorf("getting DNS provider module named '%s': %v", provName, err)
 			}
 			mgr.Challenges = &caddytls.ChallengesConfig{
-				DNSRaw: caddyconfig.JSONModuleObject(dnsProvModule.New(), "provider", provName, &warnings),
+				DNS: &caddytls.DNSChallengeConfig{
+					ProviderRaw: caddyconfig.JSONModuleObject(dnsProvModule.New(), "name", provName, &warnings),
+				},
 			}
 		}
 		if acmeCARoot != nil {
