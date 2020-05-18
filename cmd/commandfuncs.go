@@ -41,6 +41,7 @@ import (
 func cmdStart(fl Flags) (int, error) {
 	startCmdConfigFlag := fl.String("config")
 	startCmdConfigAdapterFlag := fl.String("adapter")
+	startCmdPidfileFlag := fl.String("pidfile")
 	startCmdWatchFlag := fl.Bool("watch")
 
 	// open a listener to which the child process will connect when
@@ -70,6 +71,9 @@ func cmdStart(fl Flags) (int, error) {
 	}
 	if startCmdWatchFlag {
 		cmd.Args = append(cmd.Args, "--watch")
+	}
+	if startCmdPidfileFlag != "" {
+		cmd.Args = append(cmd.Args, "--pidfile", startCmdPidfileFlag)
 	}
 	stdinpipe, err := cmd.StdinPipe()
 	if err != nil {
@@ -147,9 +151,19 @@ func cmdRun(fl Flags) (int, error) {
 	runCmdConfigFlag := fl.String("config")
 	runCmdConfigAdapterFlag := fl.String("adapter")
 	runCmdResumeFlag := fl.Bool("resume")
+	runCmdLoadEnvfileFlag := fl.String("envfile")
 	runCmdPrintEnvFlag := fl.Bool("environ")
 	runCmdWatchFlag := fl.Bool("watch")
+	runCmdPidfileFlag := fl.String("pidfile")
 	runCmdPingbackFlag := fl.String("pingback")
+
+	// load all additional envs as soon as possible
+	if runCmdLoadEnvfileFlag != "" {
+		if err := loadEnvFromFile(runCmdLoadEnvfileFlag); err != nil {
+			return caddy.ExitCodeFailedStartup,
+				fmt.Errorf("loading additional environment variables: %v", err)
+		}
+	}
 
 	// if we are supposed to print the environment, do that first
 	if runCmdPrintEnvFlag {
@@ -223,6 +237,16 @@ func cmdRun(fl Flags) (int, error) {
 	// (this better only be used in dev!)
 	if runCmdWatchFlag {
 		go watchConfigFile(configFile, runCmdConfigAdapterFlag)
+	}
+
+	// create pidfile
+	if runCmdPidfileFlag != "" {
+		err := caddy.PIDFile(runCmdPidfileFlag)
+		if err != nil {
+			caddy.Log().Error("unable to write PID file",
+				zap.String("pidfile", runCmdPidfileFlag),
+				zap.Error(err))
+		}
 	}
 
 	// warn if the environment does not provide enough information about the disk
