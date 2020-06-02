@@ -259,13 +259,13 @@ func parseTLS(h Helper) ([]ConfigValue, error) {
 	// certificate loaders
 	if len(fileLoader) > 0 {
 		configVals = append(configVals, ConfigValue{
-			Class: "tls.certificate_loader",
+			Class: "tls.cert_loader",
 			Value: fileLoader,
 		})
 	}
 	if len(folderLoader) > 0 {
 		configVals = append(configVals, ConfigValue{
-			Class: "tls.certificate_loader",
+			Class: "tls.cert_loader",
 			Value: folderLoader,
 		})
 	}
@@ -442,11 +442,11 @@ func parseRoute(h Helper) (caddyhttp.MiddlewareHandler, error) {
 }
 
 func parseHandle(h Helper) (caddyhttp.MiddlewareHandler, error) {
-	return parseSegmentAsSubroute(h)
+	return ParseSegmentAsSubroute(h)
 }
 
 func parseHandleErrors(h Helper) ([]ConfigValue, error) {
-	subroute, err := parseSegmentAsSubroute(h)
+	subroute, err := ParseSegmentAsSubroute(h)
 	if err != nil {
 		return nil, err
 	}
