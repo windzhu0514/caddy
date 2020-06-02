@@ -107,7 +107,7 @@ func (id ModuleID) Namespace() string {
 	return string(id)[:lastDot]
 }
 
-// 最后一个点后面的是ID
+// 最后一个点后面的是模块名
 // Name returns the Name (last element) of a module ID.
 func (id ModuleID) Name() string {
 	if id == "" {

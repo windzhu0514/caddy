@@ -28,6 +28,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 )
 
+// 代理选择策略
 func init() {
 	caddy.RegisterModule(RandomSelection{})
 	caddy.RegisterModule(RandomChoiceSelection{})
