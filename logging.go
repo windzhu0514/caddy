@@ -37,10 +37,10 @@ func init() {
 }
 
 // Logging帮助在caddy中记录日志。默认的log名是default，可以自行定制。也可以定义新的log
-// 默认INFO及以上等级的日志以可读的格式写入标准错误（如果输出是交互终端使用"console" encoder格式化，
+// 默认INFO及以上等级的日志以可读的格式写入标准错误（如果输出是交互终端使用"console"encoder格式化，
 // 其他的使用）"json" encoder
 // 所有定义好的日志器接收所有日志条目，但是可以通过日志等级和模块名/日志名过滤。
-// 日志器的名字和模块名相同，但是可以在日志名称后面追加字段来作为模块名，以实现具体功能。
+// 日志器的名字和模块名相同，但是可以在日志器名称后面追加字段来作为模块名，以实现具体功能。
 // 例如：可以通过日志名"http.handlers"过滤所有http handlers模块的日志，因为所有http
 // handlers模块的名字都包含这样的前缀
 // Caddy日志（除了sink）都是0内存分配，在内存和CPU占用上性能很高。启用采样可以进一步
@@ -68,7 +68,9 @@ func init() {
 // sampling can further increase throughput on extremely high-load
 // servers.
 type Logging struct {
-	//
+	// Sink（槽）是所有go标准库发送的非结构化日志的写入地方。这些日志都不是
+	// 为了在Caddy中使用而设计。 因为是全局的、非结构化的，Sink缺少高级特性
+	// 和自定义功能。
 
 	// Sink is the destination for all unstructured logs emitted
 	// from Go's standard library logger. These logs are common
