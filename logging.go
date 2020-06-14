@@ -278,6 +278,7 @@ func (wdest writerDestructor) Destruct() error {
 
 // StandardLibLog配置go标准库log包中的默认全局日志
 // 有些不是专门为Caddy开发的模块依赖项可能使用标准库日志
+
 // StandardLibLog configures the default Go standard library
 // global logger in the log package. This is necessary because
 // module dependencies which are not built specifically for

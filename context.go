@@ -85,6 +85,8 @@ func (ctx *Context) OnCancel(f func()) {
 }
 
 // 加载、初始化模块，验证配置信息
+// LoadModule方法从父结构体指针指定的结构体字段加载Caddy模块。结构体指针和它的字段名需要是string类型
+// 这样可以使用反射读取结构体字段的tag，从而获得模块的命名空间和模块名key
 
 // LoadModule loads the Caddy module(s) from the specified field of the parent struct
 // pointer and returns the loaded module(s). The struct pointer and its field name as
