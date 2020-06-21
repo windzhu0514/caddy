@@ -85,8 +85,39 @@ func (ctx *Context) OnCancel(f func()) {
 }
 
 // 加载、初始化模块，验证配置信息
-// LoadModule方法从父结构体指针指定的结构体字段加载Caddy模块。结构体指针和它的字段名需要是string类型
-// 这样可以使用反射读取结构体字段的tag，从而获得模块的命名空间和模块名key
+// LoadModule方法从父结构体指针指定的结构体字段加载Caddy模块。结构体指针和它的string类型的字段名是
+// 必须的，这样可以使用反射读取结构体字段的tag，从而获得模块的命名空间和模块名key
+
+// 结构体字段类型可以是任意一种支持的原始模块类型：json.RawMessage，[]json.RawMessage，
+// map[string]json.RawMessage，[]map[string]json.RawMessage。可以使用ModuleMap代替
+// map[string]json.RawMessage。
+
+// 返回值的类型对应传入的结构体字段的类型。
+//    json.RawMessage              => interface{}
+//    []json.RawMessage            => []interface{}
+//    [][]json.RawMessage          => [][]interface{}
+//    map[string]json.RawMessage   => map[string]interface{}
+//    []map[string]json.RawMessage => []map[string]interface{}
+// 结构体字段必须包含以下格式的结构体tag
+//    caddy:"key1=val1 key2=val2"
+
+// 加载模块时，结构体字段的caddy tag里必须包含命名空间key "namespace"。例如：加载"http.handlers"
+// 命名空间下的模块，结构体字段的caddy tag中必须包含"namespace=http.handler"
+
+// 模块名也必须时有效的。如果结构体字段的类型是map或者map的切片，当"inline_key"未指定时，使用key
+// 作为模块名。这种情况下，模块名不需要在模块种指定。
+
+// 如果结构体字段类型不是map或者inline_key不是空值，模块名必须嵌入到那些对象的值中；这些对象中必须
+// 有个key，而key关联的值就是模块名。这种key叫做"inline key",意味着包含模块名的key在模块自己里定义。
+// 按照以下格式在结构体tag种指定inline key和命名空间：
+// caddy:"namespace=http.handlers inline_key=handler"
+// 然后可以son.RawMessage里查找 `"handler": "..."`类似这样的键值对来获取模块名
+
+// 使用加载的模块时（也就是返回值），通常会把模块断言为更有用的类型并且保存在同一个结构体里，
+// 保存在同一个结构体里可以让父模块不需要时方便进行垃圾回收。
+
+// 加载到的模块已经进行过配置和验证。成功返回时，该方法会清空结构体字段json.RawMessage(s)的值，
+// 因为原始的json值已经不需要了，清空后让GC释放掉占用的内存。
 
 // LoadModule loads the Caddy module(s) from the specified field of the parent struct
 // pointer and returns the loaded module(s). The struct pointer and its field name as
@@ -137,9 +168,11 @@ func (ctx *Context) OnCancel(f func()) {
 // successfully, this method clears the json.RawMessage(s) in the field since
 // the raw JSON is no longer needed, and this allows the GC to free up memory.
 func (ctx Context) LoadModule(structPointer interface{}, fieldName string) (interface{}, error) {
+	// 结构体字段的反射值
 	val := reflect.ValueOf(structPointer).Elem().FieldByName(fieldName)
 	typ := val.Type()
 
+	// 结构体类型的反射值包含结构体的tag
 	field, ok := reflect.TypeOf(structPointer).Elem().FieldByName(fieldName)
 	if !ok {
 		panic(fmt.Sprintf("field %s does not exist in %#v", fieldName, structPointer))
@@ -296,6 +329,12 @@ func (ctx Context) loadModuleMap(namespace string, val reflect.Value) (map[strin
 	}
 	return all, nil
 }
+
+// LoadModuleByID 把rawMsg解码到模块的新实例里，并返回实例。如果mod.New方法是nil，则返回
+// 错误描述。如果模块实现了接口Validator或者Provisioner，接口的方法分别被调用以保证模块在使用前
+// 已被正确配置且验证过。
+// 这是个较为低级别的方法，通常不会被大多数模块直接调用。但是在各自的context中动态加载或卸载模块时
+// 该方法会很有用，就像来自嵌入脚本等。
 
 // LoadModuleByID decodes rawMsg into a new instance of mod and
 // returns the value. If mod.New is nil, an error is returned.

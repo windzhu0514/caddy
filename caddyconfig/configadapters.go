@@ -51,6 +51,12 @@ func JSON(val interface{}, warnings *[]Warning) json.RawMessage {
 	return b
 }
 
+// JSONModuleObject和JSON()方法类似，但是会把fieldName和fieldVal作为键值对加入到要
+// 编码为JSON对象的值中。该方法可以用来编码模块名已被对象中明确的key描述的对象的值;例如
+// `"handler": "file_server"`代表一个文件服务器的HTTP handler。val参数必须是可以被
+// 编码为map[string]interface{}的类型（即类型必须是结构体或者map）。遇到的任何错误都会
+// 转换放入warnings中
+
 // JSONModuleObject is like JSON(), except it marshals val into a JSON object
 // with an added key named fieldName with the value fieldVal. This is useful
 // for encoding module values where the module name has to be described within

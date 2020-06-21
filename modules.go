@@ -279,6 +279,9 @@ func Modules() []string {
 	return names
 }
 
+// getModuleNameInline 从raw中加载moduleNameKey对应的字符串值，raw必须是由map类型进行json编码后的值。
+// 返回该字符串值，并从raw中删除moduleNameKey
+
 // getModuleNameInline loads the string value from raw of moduleNameKey,
 // where raw must be a JSON encoding of a map. It returns that value,
 // along with the result of removing that key from raw.
