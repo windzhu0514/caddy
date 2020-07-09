@@ -252,7 +252,7 @@ func toString(val interface{}) string {
 }
 
 // ReplacerFunc是一种函数，这种函数可以根据指定的key返回对应的替换字符，
-// 如果该函数可以替换某个key，第二个返回值返回true，即使第一个返回值空置，
+// 如果该函数可以替换某个key，第二个返回值返回true，即使第一个返回值空值，
 // 如果不能，第二个返回值返回false
 
 // ReplacerFunc is a function that returns a replacement
