@@ -24,6 +24,23 @@ import (
 	"sync"
 )
 
+// Module 是一个用作Caddy模块的类型。除了这个接口，大部分的模块也会实现
+// 一些他们的持有者模块需要的一些接口。通过阅读持有者模块的文档，可以知晓
+// 需要实现哪些接口。所有的模块都会实现该接口，该接口只提供模块的ID和模块
+// 的构造函数。
+// 模块一般还会实现其他一些接口，比如Provisioner（根据配置信息配置模块）、
+// Validator（验证配置）、CleanerUpper（模块清理），如果实现了这些接口，
+// 接口的方法会在模块的生命周期内会被调用。
+// 当一个模块被持有者模块加载时：
+// 1）调用ModuleInfo.New()方法获取一个模块实例。
+// 2）把模块的配置解码到模块实例
+// 3）如果模块实现了Provisioner接口，调用模块的Provision()方法
+// 4）如果模块实现了Validator接口，调用模块的Validate()方法
+// 5）模块可能会被断言为持有者模块所需要的类型。比如：把HTTP handler类型的
+// 模块断言为caddyhttp.MiddlewareHandler接口的值。
+// 6）如果模块包含的Context被取消，如果模块实现了CleanerUpper接口，调用模块的
+// Cleanup()方法
+
 // Module is a type that is used as a Caddy module. In
 // addition to this interface, most modules will implement
 // some interface expected by their host module in order
@@ -50,6 +67,10 @@ import (
 // 6) When a module's containing Context is canceled, if it is
 // a CleanerUpper, its Cleanup() method is called.
 type Module interface {
+	// 这个方法表示实现了该方法的类型是个Caddy模块。返回的ModuleInfo值必须
+	// 包含模块的名字和模块的构造函数。这个方法必须是对模块无侵入性的，不会影
+	// 响模块的内部状态。
+
 	// This method indicates that the type is a Caddy
 	// module. The returned ModuleInfo must have both
 	// a name and a constructor function. This method
@@ -192,7 +213,7 @@ func GetModuleID(instance interface{}) string {
 	return id
 }
 
-// 返回在命令空间下的所有模块
+// 返回在范围或者命名空间下的所有模块
 // GetModules returns all modules in the given scope/namespace.
 // For example, a scope of "foo" returns modules named "foo.bar",
 // "foo.loo", but not "bar", "foo.bar.loo", etc. An empty scope
@@ -257,6 +278,9 @@ func Modules() []string {
 
 	return names
 }
+
+// getModuleNameInline 从raw中加载moduleNameKey对应的字符串值，raw必须是由map类型进行json编码后的值。
+// 返回该字符串值，并从raw中删除moduleNameKey
 
 // getModuleNameInline loads the string value from raw of moduleNameKey,
 // where raw must be a JSON encoding of a map. It returns that value,

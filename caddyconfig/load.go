@@ -61,6 +61,8 @@ func (al adminLoad) Routes() []caddy.AdminRoute {
 	}
 }
 
+// handleLoad 
+
 // handleLoad replaces the entire current configuration with
 // a new one provided in the response body. It supports config
 // adapters through the use of the Content-Type header. A

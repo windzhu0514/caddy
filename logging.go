@@ -37,14 +37,15 @@ func init() {
 }
 
 // Logging帮助在caddy中记录日志。默认的log名是default，可以自行定制。也可以定义新的log
-// 默认INFO及以上等级的日志以可读的格式写入标准错误（如果输出是交互终端使用"console" encoder格式化，
+// 默认INFO及以上等级的日志以可读的格式写入标准错误（如果输出是交互终端使用"console"encoder格式化，
 // 其他的使用）"json" encoder
 // 所有定义好的日志器接收所有日志条目，但是可以通过日志等级和模块名/日志名过滤。
-// 日志器的名字和模块名相同，但是可以在日志名称后面追加字段来作为模块名，以实现具体功能。
+// 日志器的名字和模块名相同，但是可以在日志器名称后面追加字段来作为模块名，以实现具体功能。
 // 例如：可以通过日志名"http.handlers"过滤所有http handlers模块的日志，因为所有http
 // handlers模块的名字都包含这样的前缀
 // Caddy日志（除了sink）都是0内存分配，在内存和CPU占用上性能很高。启用采样可以进一步
 // 提高超高负载服务器上的吞吐量。
+// 服务启动时，配置文件里日志的相关配置已解码到该结构体的对应字段中
 
 // Logging facilitates logging within Caddy. The default log is
 // called "default" and you can customize it. You can also define
@@ -68,7 +69,9 @@ func init() {
 // sampling can further increase throughput on extremely high-load
 // servers.
 type Logging struct {
-	//
+	// Sink（槽）是所有使用go标准库日志输出的非结构化日志的写入地方。这些日志
+	// 格式都不是特地为Caddy设计。 因为是全局的、非结构化的，所以Sink缺少高级特性
+	// 和自定义功能。
 
 	// Sink is the destination for all unstructured logs emitted
 	// from Go's standard library logger. These logs are common
@@ -77,11 +80,18 @@ type Logging struct {
 	// lacks most advanced features and customizations.
 	Sink *StandardLibLog `json:"sink,omitempty"`
 
+	// Logs代表使用到的日志，以任意指定的名字作为key。通过重新定义名字是"default"
+	// 的日志来定制化默认日志。也可以定义其他的日志并设置这些日志接收
+	// 哪些日志项
+
 	// Logs are your logs, keyed by an arbitrary name of your
 	// choosing. The default log can be customized by defining
 	// a log called "default". You can further define other logs
 	// and filter what kinds of entries they accept.
 	Logs map[string]*CustomLog `json:"logs,omitempty"`
+
+	// 保存所有打开的writer的key；所有用来配置日志器writers的key必须都添加到这个
+	// 列表里，以便在清理的时候可以关闭他们
 
 	// a list of all keys for open writers; all writers
 	// that are opened to provision this logging config
@@ -102,6 +112,8 @@ func (logging *Logging) openLogs(ctx Context) error {
 		}
 	})
 
+	// 根据Sink的配置加载对应的模块并初始化为可用
+
 	// set up the "sink" log first (std lib's default global logger)
 	if logging.Sink != nil {
 		err := logging.Sink.provision(ctx, logging)
@@ -110,6 +122,7 @@ func (logging *Logging) openLogs(ctx Context) error {
 		}
 	}
 
+	// 初始化默认日志
 	// as a special case, set up the default structured Caddy log next
 	if err := logging.setupNewDefault(ctx); err != nil {
 		return err
@@ -276,6 +289,7 @@ func (wdest writerDestructor) Destruct() error {
 
 // StandardLibLog配置go标准库log包中的默认全局日志
 // 有些不是专门为Caddy开发的模块依赖项可能使用标准库日志
+
 // StandardLibLog configures the default Go standard library
 // global logger in the log package. This is necessary because
 // module dependencies which are not built specifically for
@@ -312,6 +326,9 @@ func (sll *StandardLibLog) provision(ctx Context, logging *Logging) error {
 	return nil
 }
 
+// CustomLog代表自定义logger的配置信息。
+//
+
 // CustomLog represents a custom logger configuration.
 //
 // By default, a log will emit all log entries. Some entries
@@ -331,6 +348,8 @@ type CustomLog struct {
 	// Level is the minimum level to emit, and is inclusive.
 	// Possible levels: DEBUG, INFO, WARN, ERROR, PANIC, and FATAL
 	Level string `json:"level,omitempty"`
+
+	// Sampling用来配置日志的采样。启用后，只有部分日志会被输出。可以显著提高极高压力的服务性能。
 
 	// Sampling configures log entry sampling. If enabled,
 	// only some log entries will be emitted. This is useful

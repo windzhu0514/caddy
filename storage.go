@@ -23,6 +23,10 @@ import (
 	"go.uber.org/zap"
 )
 
+// StorageConverter定义了一个类型，该类型能够把自己转换为有效的可用的certmagic.Storage
+// 类型的值，这个值可能是短生命周期的。这个接口可以让我们把任何CertMagic存储的实现转换为
+// 可用于Caddy配置的一致性API
+
 // StorageConverter is a type that can convert itself
 // to a valid, usable certmagic.Storage value. (The
 // value might be short-lived.) This interface allows
