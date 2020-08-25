@@ -20,6 +20,8 @@ import (
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddytls"
+	"github.com/caddyserver/certmagic"
+	"github.com/mholt/acmez/acme"
 )
 
 func init() {
@@ -34,6 +36,7 @@ func init() {
 	RegisterGlobalOption("acme_ca_root", parseOptSingleString)
 	RegisterGlobalOption("acme_dns", parseOptSingleString)
 	RegisterGlobalOption("acme_eab", parseOptACMEEAB)
+	RegisterGlobalOption("cert_issuer", parseOptCertIssuer)
 	RegisterGlobalOption("email", parseOptSingleString)
 	RegisterGlobalOption("admin", parseOptAdmin)
 	RegisterGlobalOption("on_demand_tls", parseOptOnDemand)
@@ -182,7 +185,7 @@ func parseOptStorage(d *caddyfile.Dispenser) (interface{}, error) {
 }
 
 func parseOptACMEEAB(d *caddyfile.Dispenser) (interface{}, error) {
-	eab := new(caddytls.ExternalAccountBinding)
+	eab := new(acme.EAB)
 	for d.Next() {
 		if d.NextArg() {
 			return nil, d.ArgErr()
@@ -195,11 +198,11 @@ func parseOptACMEEAB(d *caddyfile.Dispenser) (interface{}, error) {
 				}
 				eab.KeyID = d.Val()
 
-			case "hmac":
+			case "mac_key":
 				if !d.NextArg() {
 					return nil, d.ArgErr()
 				}
-				eab.HMAC = d.Val()
+				eab.MACKey = d.Val()
 
 			default:
 				return nil, d.Errf("unrecognized parameter '%s'", d.Val())
@@ -207,6 +210,33 @@ func parseOptACMEEAB(d *caddyfile.Dispenser) (interface{}, error) {
 		}
 	}
 	return eab, nil
+}
+
+func parseOptCertIssuer(d *caddyfile.Dispenser) (interface{}, error) {
+	if !d.Next() { // consume option name
+		return nil, d.ArgErr()
+	}
+	if !d.Next() { // get issuer module name
+		return nil, d.ArgErr()
+	}
+	modName := d.Val()
+	mod, err := caddy.GetModule("tls.issuance." + modName)
+	if err != nil {
+		return nil, d.Errf("getting issuer module '%s': %v", modName, err)
+	}
+	unm, ok := mod.New().(caddyfile.Unmarshaler)
+	if !ok {
+		return nil, d.Errf("issuer module '%s' is not a Caddyfile unmarshaler", mod.ID)
+	}
+	err = unm.UnmarshalCaddyfile(d.NewFromNextSegment())
+	if err != nil {
+		return nil, err
+	}
+	iss, ok := unm.(certmagic.Issuer)
+	if !ok {
+		return nil, d.Errf("module %s is not a certmagic.Issuer", mod.ID)
+	}
+	return iss, nil
 }
 
 func parseOptSingleString(d *caddyfile.Dispenser) (interface{}, error) {
@@ -222,17 +252,39 @@ func parseOptSingleString(d *caddyfile.Dispenser) (interface{}, error) {
 }
 
 func parseOptAdmin(d *caddyfile.Dispenser) (interface{}, error) {
-	if d.Next() {
-		var listenAddress string
-		if !d.AllArgs(&listenAddress) {
-			return "", d.ArgErr()
+	adminCfg := new(caddy.AdminConfig)
+	for d.Next() {
+		if d.NextArg() {
+			listenAddress := d.Val()
+			if listenAddress == "off" {
+				adminCfg.Disabled = true
+				if d.Next() { // Do not accept any remaining options including block
+					return nil, d.Err("No more option is allowed after turning off admin config")
+				}
+			} else {
+				adminCfg.Listen = listenAddress
+				if d.NextArg() { // At most 1 arg is allowed
+					return nil, d.ArgErr()
+				}
+			}
 		}
-		if listenAddress == "" {
-			listenAddress = caddy.DefaultAdminListen
+		for nesting := d.Nesting(); d.NextBlock(nesting); {
+			switch d.Val() {
+			case "enforce_origin":
+				adminCfg.EnforceOrigin = true
+
+			case "origins":
+				adminCfg.Origins = d.RemainingArgs()
+
+			default:
+				return nil, d.Errf("unrecognized parameter '%s'", d.Val())
+			}
 		}
-		return listenAddress, nil
 	}
-	return "", nil
+	if adminCfg.Listen == "" && !adminCfg.Disabled {
+		adminCfg.Listen = caddy.DefaultAdminListen
+	}
+	return adminCfg, nil
 }
 
 func parseOptOnDemand(d *caddyfile.Dispenser) (interface{}, error) {
