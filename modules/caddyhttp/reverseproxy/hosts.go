@@ -255,7 +255,7 @@ type DialInfo struct {
 
 	// The address to dial. Follows the same
 	// semantics and rules as net.Dial.
-	Address string
+	Address string // host:port
 
 	// Host and Port are components of Address.
 	Host, Port string

@@ -500,9 +500,10 @@ func (h Handler) prepareRequest(req *http.Request) error {
 // (This method is mostly the beginning of what was borrowed from the net/http/httputil package in the
 // Go standard library which was used as the foundation.)
 func (h *Handler) reverseProxy(rw http.ResponseWriter, req *http.Request, di DialInfo, next caddyhttp.Handler) error {
-	di.Upstream.Host.CountRequest(1)
+	di.Upstream.Host.CountRequest(1) // 记录访问
 	defer di.Upstream.Host.CountRequest(-1)
 
+	// 修改req.URL.Host为上游服务的地址
 	// point the request to this upstream
 	h.directRequest(req, di)
 
@@ -706,6 +707,7 @@ func (h Handler) directRequest(req *http.Request, di DialInfo) {
 	// we need a host, so set the upstream's host address
 	reqHost := di.Address
 
+	// 去掉http https访问的端口号
 	// if the port equates to the scheme, strip the port because
 	// it's weird to make a request like http://example.com:80/.
 	if (req.URL.Scheme == "http" && di.Port == "80") ||

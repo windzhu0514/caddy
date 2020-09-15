@@ -22,6 +22,8 @@ import (
 	"strings"
 )
 
+// Dispenser 分配token，和lexer类似，但是可以使用结构体注解来解析token。
+
 // Dispenser is a type that dispenses tokens, similarly to a lexer,
 // except that it can do so with some notion of structure. An empty
 // Dispenser is invalid; call NewDispenser to make a proper instance.

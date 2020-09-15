@@ -66,6 +66,7 @@ func replaceEnvVars(input []byte) ([]byte, error) {
 			continue
 		}
 
+		// os.ExpandEnv 展开环境变量值中包含的环境变量占位符
 		// get the value of the environment variable
 		envVarValue := []byte(os.ExpandEnv(os.Getenv(string(envVarName))))
 
