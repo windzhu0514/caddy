@@ -467,6 +467,12 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					h.FlushInterval = caddy.Duration(dur)
 				}
 
+			case "buffer_requests":
+				if d.NextArg() {
+					return d.ArgErr()
+				}
+				h.BufferRequests = true
+
 			case "header_up":
 				if h.Headers == nil {
 					h.Headers = new(headers.Handler)
@@ -717,6 +723,14 @@ func (h *HTTPTransport) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				h.Versions = d.RemainingArgs()
 				if len(h.Versions) == 0 {
 					return d.ArgErr()
+				}
+
+			case "compression":
+				if d.NextArg() {
+					if d.Val() == "off" {
+						var disable bool
+						h.Compression = &disable
+					}
 				}
 
 			default:

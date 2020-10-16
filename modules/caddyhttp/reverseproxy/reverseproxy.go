@@ -116,6 +116,7 @@ type Handler struct {
 	Transport http.RoundTripper `json:"-"`
 	CB        CircuitBreaker    `json:"-"`
 
+	ctx    caddy.Context
 	logger *zap.Logger
 }
 
@@ -129,6 +130,7 @@ func (Handler) CaddyModule() caddy.ModuleInfo {
 
 // Provision ensures that h is set up properly before use.
 func (h *Handler) Provision(ctx caddy.Context) error {
+	h.ctx = ctx
 	h.logger = ctx.Logger(h)
 
 	// start by loading modules
@@ -239,36 +241,43 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		}
 	}
 
-	// if active health checks are enabled, configure them and start a worker
-	if h.HealthChecks != nil &&
-		h.HealthChecks.Active != nil &&
-		(h.HealthChecks.Active.Path != "" || h.HealthChecks.Active.Port != 0) {
-		h.HealthChecks.Active.logger = h.logger.Named("health_checker.active")
-
-		timeout := time.Duration(h.HealthChecks.Active.Timeout)
-		if timeout == 0 {
-			timeout = 5 * time.Second
-		}
-
-		h.HealthChecks.Active.stopChan = make(chan struct{})
-		h.HealthChecks.Active.httpClient = &http.Client{
-			Timeout:   timeout,
-			Transport: h.Transport,
-		}
-
-		if h.HealthChecks.Active.Interval == 0 {
-			h.HealthChecks.Active.Interval = caddy.Duration(30 * time.Second)
-		}
-
-		if h.HealthChecks.Active.ExpectBody != "" {
-			var err error
-			h.HealthChecks.Active.bodyRegexp, err = regexp.Compile(h.HealthChecks.Active.ExpectBody)
-			if err != nil {
-				return fmt.Errorf("expect_body: compiling regular expression: %v", err)
+	if h.HealthChecks != nil {
+		// set defaults on passive health checks, if necessary
+		if h.HealthChecks.Passive != nil {
+			if h.HealthChecks.Passive.FailDuration > 0 && h.HealthChecks.Passive.MaxFails == 0 {
+				h.HealthChecks.Passive.MaxFails = 1
 			}
 		}
 
-		go h.activeHealthChecker()
+		// if active health checks are enabled, configure them and start a worker
+		if h.HealthChecks.Active != nil &&
+			(h.HealthChecks.Active.Path != "" || h.HealthChecks.Active.Port != 0) {
+			h.HealthChecks.Active.logger = h.logger.Named("health_checker.active")
+
+			timeout := time.Duration(h.HealthChecks.Active.Timeout)
+			if timeout == 0 {
+				timeout = 5 * time.Second
+			}
+
+			h.HealthChecks.Active.httpClient = &http.Client{
+				Timeout:   timeout,
+				Transport: h.Transport,
+			}
+
+			if h.HealthChecks.Active.Interval == 0 {
+				h.HealthChecks.Active.Interval = caddy.Duration(30 * time.Second)
+			}
+
+			if h.HealthChecks.Active.ExpectBody != "" {
+				var err error
+				h.HealthChecks.Active.bodyRegexp, err = regexp.Compile(h.HealthChecks.Active.ExpectBody)
+				if err != nil {
+					return fmt.Errorf("expect_body: compiling regular expression: %v", err)
+				}
+			}
+
+			go h.activeHealthChecker()
+		}
 	}
 
 	// set up any response routes
@@ -284,14 +293,6 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 
 // Cleanup cleans up the resources made by h during provisioning.
 func (h *Handler) Cleanup() error {
-	// stop the active health checker
-	if h.HealthChecks != nil &&
-		h.HealthChecks.Active != nil &&
-		h.HealthChecks.Active.stopChan != nil {
-		// TODO: consider using context cancellation, could be much simpler
-		close(h.HealthChecks.Active.stopChan)
-	}
-
 	// TODO: Close keepalive connections on reload? https://github.com/caddyserver/caddy/pull/2507/files#diff-70219fd88fe3f36834f474ce6537ed26R762
 
 	// remove hosts from our config from the pool
@@ -355,7 +356,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 			if proxyErr == nil {
 				proxyErr = fmt.Errorf("no upstreams available")
 			}
-			if !h.LoadBalancing.tryAgain(start, proxyErr, r) {
+			if !h.LoadBalancing.tryAgain(h.ctx, start, proxyErr, r) {
 				break
 			}
 			continue
@@ -414,7 +415,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		h.countFailure(upstream)
 
 		// if we've tried long enough, break
-		if !h.LoadBalancing.tryAgain(start, proxyErr, r) {
+		if !h.LoadBalancing.tryAgain(h.ctx, start, proxyErr, r) {
 			break
 		}
 	}
@@ -499,9 +500,10 @@ func (h Handler) prepareRequest(req *http.Request) error {
 // (This method is mostly the beginning of what was borrowed from the net/http/httputil package in the
 // Go standard library which was used as the foundation.)
 func (h *Handler) reverseProxy(rw http.ResponseWriter, req *http.Request, di DialInfo, next caddyhttp.Handler) error {
-	di.Upstream.Host.CountRequest(1)
+	di.Upstream.Host.CountRequest(1) // 记录访问
 	defer di.Upstream.Host.CountRequest(-1)
 
+	// 修改req.URL.Host为上游服务的地址
 	// point the request to this upstream
 	h.directRequest(req, di)
 
@@ -615,6 +617,14 @@ func (h *Handler) reverseProxy(rw http.ResponseWriter, req *http.Request, di Dia
 
 	rw.WriteHeader(res.StatusCode)
 
+	// some apps need the response headers before starting to stream content with http2,
+	// so it's important to explicitly flush the headers to the client before streaming the data.
+	// (see https://github.com/caddyserver/caddy/issues/3556 for use case and nuances)
+	if h.isBidirectionalStream(req, res) {
+		if wf, ok := rw.(http.Flusher); ok {
+			wf.Flush()
+		}
+	}
 	err = h.copyResponse(rw, res.Body, h.flushInterval(req, res))
 	res.Body.Close() // close now, instead of defer, to populate res.Trailer
 	if err != nil {
@@ -657,7 +667,7 @@ func (h *Handler) reverseProxy(rw http.ResponseWriter, req *http.Request, di Dia
 // long enough before the next retry (i.e. no more sleeping is
 // needed). If false is returned, the handler should stop trying to
 // proxy the request.
-func (lb LoadBalancing) tryAgain(start time.Time, proxyErr error, req *http.Request) bool {
+func (lb LoadBalancing) tryAgain(ctx caddy.Context, start time.Time, proxyErr error, req *http.Request) bool {
 	// if we've tried long enough, break
 	if time.Since(start) >= time.Duration(lb.TryDuration) {
 		return false
@@ -683,8 +693,12 @@ func (lb LoadBalancing) tryAgain(start time.Time, proxyErr error, req *http.Requ
 	}
 
 	// otherwise, wait and try the next available host
-	time.Sleep(time.Duration(lb.TryInterval))
-	return true
+	select {
+	case <-time.After(time.Duration(lb.TryInterval)):
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // directRequest modifies only req.URL so that it points to the upstream
@@ -693,6 +707,7 @@ func (h Handler) directRequest(req *http.Request, di DialInfo) {
 	// we need a host, so set the upstream's host address
 	reqHost := di.Address
 
+	// 去掉http https访问的端口号
 	// if the port equates to the scheme, strip the port because
 	// it's weird to make a request like http://example.com:80/.
 	if (req.URL.Scheme == "http" && di.Port == "80") ||

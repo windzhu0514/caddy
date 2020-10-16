@@ -23,10 +23,10 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddypki"
 	"github.com/caddyserver/certmagic"
 	"github.com/smallstep/certificates/authority/provisioner"
-	"github.com/smallstep/cli/crypto/x509util"
 )
 
 func init() {
@@ -63,25 +63,25 @@ func (InternalIssuer) CaddyModule() caddy.ModuleInfo {
 }
 
 // Provision sets up the issuer.
-func (li *InternalIssuer) Provision(ctx caddy.Context) error {
+func (iss *InternalIssuer) Provision(ctx caddy.Context) error {
 	// get a reference to the configured CA
 	appModule, err := ctx.App("pki")
 	if err != nil {
 		return err
 	}
 	pkiApp := appModule.(*caddypki.PKI)
-	if li.CA == "" {
-		li.CA = caddypki.DefaultCAID
+	if iss.CA == "" {
+		iss.CA = caddypki.DefaultCAID
 	}
-	ca, ok := pkiApp.CAs[li.CA]
+	ca, ok := pkiApp.CAs[iss.CA]
 	if !ok {
-		return fmt.Errorf("no certificate authority configured with id: %s", li.CA)
+		return fmt.Errorf("no certificate authority configured with id: %s", iss.CA)
 	}
-	li.ca = ca
+	iss.ca = ca
 
 	// set any other default values
-	if li.Lifetime == 0 {
-		li.Lifetime = caddy.Duration(defaultInternalCertLifetime)
+	if iss.Lifetime == 0 {
+		iss.Lifetime = caddy.Duration(defaultInternalCertLifetime)
 	}
 
 	return nil
@@ -89,39 +89,37 @@ func (li *InternalIssuer) Provision(ctx caddy.Context) error {
 
 // IssuerKey returns the unique issuer key for the
 // confgured CA endpoint.
-func (li InternalIssuer) IssuerKey() string {
-	return li.ca.ID()
+func (iss InternalIssuer) IssuerKey() string {
+	return iss.ca.ID()
 }
 
 // Issue issues a certificate to satisfy the CSR.
-func (li InternalIssuer) Issue(ctx context.Context, csr *x509.CertificateRequest) (*certmagic.IssuedCertificate, error) {
+func (iss InternalIssuer) Issue(ctx context.Context, csr *x509.CertificateRequest) (*certmagic.IssuedCertificate, error) {
 	// prepare the signing authority
 	authCfg := caddypki.AuthorityConfig{
-		SignWithRoot: li.SignWithRoot,
+		SignWithRoot: iss.SignWithRoot,
 	}
-	auth, err := li.ca.NewAuthority(authCfg)
+	auth, err := iss.ca.NewAuthority(authCfg)
 	if err != nil {
 		return nil, err
 	}
 
 	// get the cert (public key) that will be used for signing
 	var issuerCert *x509.Certificate
-	if li.SignWithRoot {
-		issuerCert = li.ca.RootCertificate()
+	if iss.SignWithRoot {
+		issuerCert = iss.ca.RootCertificate()
 	} else {
-		issuerCert = li.ca.IntermediateCertificate()
+		issuerCert = iss.ca.IntermediateCertificate()
 	}
 
 	// ensure issued certificate does not expire later than its issuer
-	lifetime := time.Duration(li.Lifetime)
+	lifetime := time.Duration(iss.Lifetime)
 	if time.Now().Add(lifetime).After(issuerCert.NotAfter) {
 		// TODO: log this
 		lifetime = issuerCert.NotAfter.Sub(time.Now())
 	}
 
-	certChain, err := auth.Sign(csr, provisioner.Options{},
-		profileDefaultDuration(li.Lifetime),
-	)
+	certChain, err := auth.Sign(csr, provisioner.SignOptions{}, customCertLifetime(iss.Lifetime))
 	if err != nil {
 		return nil, err
 	}
@@ -139,33 +137,34 @@ func (li InternalIssuer) Issue(ctx context.Context, csr *x509.CertificateRequest
 	}, nil
 }
 
-// profileDefaultDuration is a wrapper against x509util.WithOption to conform
-// the SignOption interface.
+// UnmarshalCaddyfile deserializes Caddyfile tokens into iss.
 //
-// This type is borrowed from the smallstep libraries:
-// https://github.com/smallstep/certificates/blob/806abb6232a5691198b891d76b9898ea7f269da0/authority/provisioner/sign_options.go#L191-L211
-// as per https://github.com/smallstep/certificates/issues/198.
+//     ... internal {
+//         ca <name>
+//     }
 //
-// TODO: In the future, this approach to custom cert lifetimes may not be necessary
-type profileDefaultDuration time.Duration
-
-func (d profileDefaultDuration) Option(so provisioner.Options) x509util.WithOption {
-	var backdate time.Duration
-	notBefore := so.NotBefore.Time()
-	if notBefore.IsZero() {
-		notBefore = time.Now().Truncate(time.Second)
-		backdate = -1 * so.Backdate
-	}
-	notAfter := so.NotAfter.RelativeTime(notBefore)
-	return func(p x509util.Profile) error {
-		fn := x509util.WithNotBeforeAfterDuration(notBefore, notAfter, time.Duration(d))
-		if err := fn(p); err != nil {
-			return err
+func (iss *InternalIssuer) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	for d.Next() {
+		for d.NextBlock(0) {
+			switch d.Val() {
+			case "ca":
+				if !d.AllArgs(&iss.CA) {
+					return d.ArgErr()
+				}
+			}
 		}
-		crt := p.Subject()
-		crt.NotBefore = crt.NotBefore.Add(backdate)
-		return nil
 	}
+	return nil
+}
+
+// customCertLifetime allows us to customize certificates that are issued
+// by Smallstep libs, particularly the NotBefore & NotAfter dates.
+type customCertLifetime time.Duration
+
+func (d customCertLifetime) Modify(cert *x509.Certificate, _ provisioner.SignOptions) error {
+	cert.NotBefore = time.Now()
+	cert.NotAfter = cert.NotBefore.Add(time.Duration(d))
+	return nil
 }
 
 const (
@@ -174,6 +173,7 @@ const (
 
 // Interface guards
 var (
-	_ caddy.Provisioner = (*InternalIssuer)(nil)
-	_ certmagic.Issuer  = (*InternalIssuer)(nil)
+	_ caddy.Provisioner               = (*InternalIssuer)(nil)
+	_ certmagic.Issuer                = (*InternalIssuer)(nil)
+	_ provisioner.CertificateModifier = (*customCertLifetime)(nil)
 )

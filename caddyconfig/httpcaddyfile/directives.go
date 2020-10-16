@@ -55,10 +55,11 @@ var directiveOrder = []string{
 	"encode",
 	"templates",
 
-	// special routing directives
+	// special routing & dispatching directives
 	"handle",
 	"handle_path",
 	"route",
+	"push",
 
 	// handlers that typically respond to requests
 	"respond",
@@ -269,6 +270,18 @@ func (h Helper) NewBindAddresses(addrs []string) []ConfigValue {
 // are themselves treated as directives, from which a subroute is built
 // and returned.
 func ParseSegmentAsSubroute(h Helper) (caddyhttp.MiddlewareHandler, error) {
+	allResults, err := parseSegmentAsConfig(h)
+	if err != nil {
+		return nil, err
+	}
+
+	return buildSubroute(allResults, h.groupCounter)
+}
+
+// parseSegmentAsConfig parses the segment such that its subdirectives
+// are themselves treated as directives, including named matcher definitions,
+// and the raw Config structs are returned.
+func parseSegmentAsConfig(h Helper) ([]ConfigValue, error) {
 	var allResults []ConfigValue
 
 	for h.Next() {
@@ -319,7 +332,7 @@ func ParseSegmentAsSubroute(h Helper) (caddyhttp.MiddlewareHandler, error) {
 		}
 	}
 
-	return buildSubroute(allResults, h.groupCounter)
+	return allResults, nil
 }
 
 // ConfigValue represents a value to be added to the final
@@ -386,6 +399,14 @@ func sortRoutes(routes []ConfigValue) {
 		if len(jPM) > 0 {
 			jPathLen = len(jPM[0])
 		}
+
+		// if both directives have no path matcher, use whichever one
+		// has any kind of matcher defined first.
+		if iPathLen == 0 && jPathLen == 0 {
+			return len(iRoute.MatcherSetsRaw) > 0 && len(jRoute.MatcherSetsRaw) == 0
+		}
+
+		// sort with the most-specific (longest) path first
 		return iPathLen > jPathLen
 	})
 }

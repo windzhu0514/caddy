@@ -66,6 +66,7 @@ func replaceEnvVars(input []byte) ([]byte, error) {
 			continue
 		}
 
+		// os.ExpandEnv 展开环境变量值中包含的环境变量占位符
 		// get the value of the environment variable
 		envVarValue := []byte(os.ExpandEnv(os.Getenv(string(envVarName))))
 
@@ -87,15 +88,9 @@ func allTokens(filename string, input []byte) ([]Token, error) {
 	if err != nil {
 		return nil, err
 	}
-	l := new(lexer)
-	err = l.load(bytes.NewReader(input))
+	tokens, err := Tokenize(input, filename)
 	if err != nil {
 		return nil, err
-	}
-	var tokens []Token
-	for l.next() {
-		l.token.File = filename
-		tokens = append(tokens, l.token)
 	}
 	return tokens, nil
 }

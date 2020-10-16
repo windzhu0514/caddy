@@ -80,7 +80,6 @@ type ActiveHealthChecks struct {
 	// body of a healthy backend.
 	ExpectBody string `json:"expect_body,omitempty"`
 
-	stopChan   chan struct{}
 	httpClient *http.Client
 	bodyRegexp *regexp.Regexp
 	logger     *zap.Logger
@@ -139,8 +138,7 @@ func (h *Handler) activeHealthChecker() {
 		select {
 		case <-ticker.C:
 			h.doActiveHealthCheckForAllHosts()
-		case <-h.HealthChecks.Active.stopChan:
-			// TODO: consider using a Context for cancellation instead
+		case <-h.ctx.Done():
 			ticker.Stop()
 			return
 		}
@@ -220,9 +218,8 @@ func (h *Handler) doActiveHealthCheck(dialInfo DialInfo, hostAddr string, host H
 		u.Host = net.JoinHostPort(host, portStr)
 	}
 
-	// attach dialing information to this request - TODO: use caddy.Context's context
-	// so it can be canceled on config reload
-	ctx := context.Background()
+	// attach dialing information to this request
+	ctx := h.ctx.Context
 	ctx = context.WithValue(ctx, caddy.ReplacerCtxKey, caddy.NewReplacer())
 	ctx = context.WithValue(ctx, caddyhttp.VarsCtxKey, map[string]interface{}{
 		dialInfoVarKey: dialInfo,
@@ -343,8 +340,8 @@ func (h *Handler) countFailure(upstream *Upstream) {
 	if err != nil {
 		h.HealthChecks.Passive.logger.Error("could not count failure",
 			zap.String("host", upstream.Dial),
-			zap.Error(err),
-		)
+			zap.Error(err))
+		return
 	}
 
 	// forget it later
@@ -359,8 +356,7 @@ func (h *Handler) countFailure(upstream *Upstream) {
 		if err != nil {
 			h.HealthChecks.Passive.logger.Error("could not forget failure",
 				zap.String("host", upstream.Dial),
-				zap.Error(err),
-			)
+				zap.Error(err))
 		}
 	}(upstream.Host, failDuration)
 }

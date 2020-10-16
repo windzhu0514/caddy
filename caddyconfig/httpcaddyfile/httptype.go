@@ -261,12 +261,8 @@ func (st ServerType) Setup(inputServerBlocks []caddyfile.ServerBlock,
 			storageCvtr.(caddy.Module).CaddyModule().ID.Name(),
 			&warnings)
 	}
-	if adminConfig, ok := options["admin"].(string); ok && adminConfig != "" {
-		if adminConfig == "off" {
-			cfg.Admin = &caddy.AdminConfig{Disabled: true}
-		} else {
-			cfg.Admin = &caddy.AdminConfig{Listen: adminConfig}
-		}
+	if adminConfig, ok := options["admin"].(*caddy.AdminConfig); ok && adminConfig != nil {
+		cfg.Admin = adminConfig
 	}
 	if len(customLogs) > 0 {
 		if cfg.Logging == nil {
@@ -450,12 +446,12 @@ func (st *ServerType) serversFromPairings(
 						}
 					} else {
 						cp.DefaultSNI = defaultSNI
-						hasCatchAllTLSConnPolicy = true
 					}
 
 					// only append this policy if it actually changes something
 					if !cp.SettingsEmpty() {
 						srv.TLSConnPolicies = append(srv.TLSConnPolicies, cp)
+						hasCatchAllTLSConnPolicy = len(hosts) == 0
 					}
 				}
 			}
@@ -657,9 +653,15 @@ func detectConflictingSchemes(srv *caddyhttp.Server, serverBlocks []serverBlock,
 	return nil
 }
 
-// consolidateConnPolicies removes empty TLS connection policies and combines
-// equivalent ones for a cleaner overall output.
+// consolidateConnPolicies sorts any catch-all policy to the end, removes empty TLS connection
+// policies, and combines equivalent ones for a cleaner overall output.
 func consolidateConnPolicies(cps caddytls.ConnectionPolicies) (caddytls.ConnectionPolicies, error) {
+	// catch-all policies (those without any matcher) should be at the
+	// end, otherwise it nullifies any more specific policies
+	sort.SliceStable(cps, func(i, j int) bool {
+		return cps[j].MatchersRaw == nil && cps[i].MatchersRaw != nil
+	})
+
 	for i := 0; i < len(cps); i++ {
 		// compare it to the others
 		for j := 0; j < len(cps); j++ {

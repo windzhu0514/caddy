@@ -16,11 +16,15 @@ package caddyfile
 
 import (
 	"bufio"
+	"bytes"
 	"io"
 	"unicode"
 )
 
 type (
+	// lexer 从reader中逐个标识符的获取值。每个token都是一个单词，每个token由空白字符分隔。
+	// 单词中如果有空白字符，需要使用双引号括起来。
+
 	// lexer is a utility which can get values, token by
 	// token, from a Reader. A token is a word, and tokens
 	// are separated by whitespace. A word can be enclosed
@@ -60,6 +64,12 @@ func (l *lexer) load(input io.Reader) error {
 
 	return nil
 }
+
+// next 读取下一个token到lexer中
+// token由空白字符分隔，双引号包括token中可以由空白字符。
+// 双引号包括的字符串中，引号可能被转义。其他字符不会被转移。
+// 如果读取到#，#号后面的字符串被舍弃。
+// 如果token读取成功，返回true，否则返回false
 
 // next loads the next token into the lexer.
 // A token is delimited by whitespace, unless
@@ -167,4 +177,22 @@ func (l *lexer) next() bool {
 
 		val = append(val, ch)
 	}
+}
+
+// Tokenize takes bytes as input and lexes it into
+// a list of tokens that can be parsed as a Caddyfile.
+// Also takes a filename to fill the token's File as
+// the source of the tokens, which is important to
+// determine relative paths for `import` directives.
+func Tokenize(input []byte, filename string) ([]Token, error) {
+	l := lexer{}
+	if err := l.load(bytes.NewReader(input)); err != nil {
+		return nil, err
+	}
+	var tokens []Token
+	for l.next() {
+		l.token.File = filename
+		tokens = append(tokens, l.token)
+	}
+	return tokens, nil
 }

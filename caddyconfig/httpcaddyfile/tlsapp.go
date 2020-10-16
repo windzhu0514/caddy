@@ -21,12 +21,14 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/caddy/v2/modules/caddytls"
 	"github.com/caddyserver/certmagic"
+	"github.com/mholt/acmez/acme"
 )
 
 func (st ServerType) buildTLSApp(
@@ -134,8 +136,11 @@ func (st ServerType) buildTLSApp(
 				// issuer, skip, since we intend to adjust only ACME issuers
 				var acmeIssuer *caddytls.ACMEIssuer
 				if ap.Issuer != nil {
-					var ok bool
-					if acmeIssuer, ok = ap.Issuer.(*caddytls.ACMEIssuer); !ok {
+					// ensure we include any issuer that embeds/wraps an underlying ACME issuer
+					type acmeCapable interface{ GetACMEIssuer() *caddytls.ACMEIssuer }
+					if acmeWrapper, ok := ap.Issuer.(acmeCapable); ok {
+						acmeIssuer = acmeWrapper.GetACMEIssuer()
+					} else {
 						break
 					}
 				}
@@ -347,6 +352,8 @@ func (st ServerType) buildTLSApp(
 // returned if there are no default/global options. However, if always is
 // true, a non-nil value will always be returned (unless there is an error).
 func newBaseAutomationPolicy(options map[string]interface{}, warnings []caddyconfig.Warning, always bool) (*caddytls.AutomationPolicy, error) {
+	issuer, hasIssuer := options["cert_issuer"]
+
 	acmeCA, hasACMECA := options["acme_ca"]
 	acmeCARoot, hasACMECARoot := options["acme_ca_root"]
 	acmeDNS, hasACMEDNS := options["acme_dns"]
@@ -356,7 +363,7 @@ func newBaseAutomationPolicy(options map[string]interface{}, warnings []caddycon
 	localCerts, hasLocalCerts := options["local_certs"]
 	keyType, hasKeyType := options["key_type"]
 
-	hasGlobalAutomationOpts := hasACMECA || hasACMECARoot || hasACMEDNS || hasACMEEAB || hasEmail || hasLocalCerts || hasKeyType
+	hasGlobalAutomationOpts := hasIssuer || hasACMECA || hasACMECARoot || hasACMEDNS || hasACMEEAB || hasEmail || hasLocalCerts || hasKeyType
 
 	// if there are no global options related to automation policies
 	// set, then we can just return right away
@@ -368,8 +375,16 @@ func newBaseAutomationPolicy(options map[string]interface{}, warnings []caddycon
 	}
 
 	ap := new(caddytls.AutomationPolicy)
+	if keyType != nil {
+		ap.KeyType = keyType.(string)
+	}
 
-	if localCerts != nil {
+	if hasIssuer {
+		if hasACMECA || hasACMEDNS || hasACMEEAB || hasEmail || hasLocalCerts {
+			return nil, fmt.Errorf("global options are ambiguous: cert_issuer is confusing when combined with acme_*, email, or local_certs options")
+		}
+		ap.Issuer = issuer.(certmagic.Issuer)
+	} else if localCerts != nil {
 		// internal issuer enabled trumps any ACME configurations; useful in testing
 		ap.Issuer = new(caddytls.InternalIssuer) // we'll encode it later
 	} else {
@@ -399,15 +414,25 @@ func newBaseAutomationPolicy(options map[string]interface{}, warnings []caddycon
 			mgr.TrustedRootsPEMFiles = []string{acmeCARoot.(string)}
 		}
 		if acmeEAB != nil {
-			mgr.ExternalAccount = acmeEAB.(*caddytls.ExternalAccountBinding)
+			mgr.ExternalAccount = acmeEAB.(*acme.EAB)
 		}
-		if keyType != nil {
-			ap.KeyType = keyType.(string)
-		}
-		ap.Issuer = mgr // we'll encode it later
+		ap.Issuer = disambiguateACMEIssuer(mgr) // we'll encode it later
 	}
 
 	return ap, nil
+}
+
+// disambiguateACMEIssuer returns an issuer based on the properties of acmeIssuer.
+// If acmeIssuer implicitly configures a certain kind of ACMEIssuer (for example,
+// ZeroSSL), the proper wrapper over acmeIssuer will be returned instead.
+func disambiguateACMEIssuer(acmeIssuer *caddytls.ACMEIssuer) certmagic.Issuer {
+	// as a special case, we integrate with ZeroSSL's ACME endpoint if it looks like an
+	// implicit ZeroSSL configuration (this requires a  wrapper type over ACMEIssuer
+	// because of the EAB generation; if EAB is provided, we can use plain ACMEIssuer)
+	if strings.Contains(acmeIssuer.CA, "acme.zerossl.com") && acmeIssuer.ExternalAccount == nil {
+		return &caddytls.ZeroSSLIssuer{ACMEIssuer: acmeIssuer}
+	}
+	return acmeIssuer
 }
 
 // consolidateAutomationPolicies combines automation policies that are the same,
@@ -443,7 +468,12 @@ func consolidateAutomationPolicies(aps []*caddytls.AutomationPolicy) []*caddytls
 				} else if len(aps[i].Subjects) > 0 && len(aps[j].Subjects) == 0 {
 					aps = append(aps[:i], aps[i+1:]...)
 				} else {
-					aps[i].Subjects = append(aps[i].Subjects, aps[j].Subjects...)
+					// avoid repeated subjects
+					for _, subj := range aps[j].Subjects {
+						if !sliceContains(aps[i].Subjects, subj) {
+							aps[i].Subjects = append(aps[i].Subjects, subj)
+						}
+					}
 					aps = append(aps[:j], aps[j+1:]...)
 				}
 				i--
