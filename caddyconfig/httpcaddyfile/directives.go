@@ -138,6 +138,7 @@ func RegisterGlobalOption(opt string, setupFunc UnmarshalGlobalFunc) {
 // Caddyfile tokens.
 type Helper struct {
 	*caddyfile.Dispenser
+	// State存储caddyfile转变过程中的中间变量
 	// State stores intermediate variables during caddyfile adaptation.
 	State        map[string]interface{}
 	options      map[string]interface{}
