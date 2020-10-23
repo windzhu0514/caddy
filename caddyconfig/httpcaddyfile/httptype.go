@@ -300,6 +300,8 @@ func (st ServerType) Setup(inputServerBlocks []caddyfile.ServerBlock,
 	return cfg, warnings, nil
 }
 
+// caddyfile全局配置项https://caddyserver.com/docs/caddyfile/options
+
 // evaluateGlobalOptionsBlock evaluates the global options block,
 // which is expected to be the first server block if it has zero
 // keys. It returns the updated list of server blocks with the

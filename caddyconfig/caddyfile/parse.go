@@ -26,6 +26,12 @@ import (
 	"github.com/caddyserver/caddy/v2"
 )
 
+// Parse 只是据server配置块把token分组。不进行进一步的解析。
+// 按出现的顺序返回所有的server配置块。
+// 不在validDirectives里的指令会导致解析错误。
+// 如果不希望进行指令有效性检查，可以把参数input设置为nil。
+// 在解析开始前会先替换掉环境变量
+
 // Parse parses the input just enough to group tokens, in
 // order, by server block. No further parsing is performed.
 // Server blocks are returned in the order in which they appear.
@@ -48,6 +54,7 @@ func Parse(filename string, input []byte) ([]ServerBlock, error) {
 func replaceEnvVars(input []byte) ([]byte, error) {
 	var offset int
 	for {
+		// 查找引用的环境变量起始位置
 		begin := bytes.Index(input[offset:], spanOpen)
 		if begin < 0 {
 			break
@@ -79,6 +86,9 @@ func replaceEnvVars(input []byte) ([]byte, error) {
 	}
 	return input, nil
 }
+
+// allTokens分析输入的整个Caddyfile的内容，而不进行解析。
+// 按顺序返回所有非结构化的token。
 
 // allTokens lexes the entire input, but does not parse it.
 // It returns all the tokens from the input, unstructured

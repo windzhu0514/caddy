@@ -50,6 +50,7 @@ func (l *lexer) load(input io.Reader) error {
 	l.reader = bufio.NewReader(input)
 	l.line = 1
 
+	// 丢弃检查字节序字符
 	// discard byte order mark, if present
 	firstCh, _, err := l.reader.ReadRune()
 	if err != nil {
@@ -66,8 +67,8 @@ func (l *lexer) load(input io.Reader) error {
 }
 
 // next 读取下一个token到lexer中
-// token由空白字符分隔，双引号包括token中可以由空白字符。
-// 双引号包括的字符串中，引号可能被转义。其他字符不会被转移。
+// token由空白字符分隔，token中如果包含空白字符需要使用双引号包括整个token。
+// 双引号包括的字符串中可以包含被转义的引号，其他转义字符不会被识别。
 // 如果读取到#，#号后面的字符串被舍弃。
 // 如果token读取成功，返回true，否则返回false
 

@@ -24,6 +24,8 @@ import (
 	"github.com/mholt/acmez/acme"
 )
 
+// caddyfile全局配置项解析
+
 func init() {
 	RegisterGlobalOption("debug", parseOptTrue)
 	RegisterGlobalOption("http_port", parseOptHTTPPort)
