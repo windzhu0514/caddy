@@ -543,6 +543,9 @@ func (sb ServerBlock) DispenseDirective(dir string) *Dispenser {
 	return NewDispenser(tokens)
 }
 
+// Segment 代表一个token列表，这些token以指令开始，直到指令的结束。
+// 指令的结束位置通常是行尾或者当前指令块的结束位置
+// 即caddyfile里一行token
 // Segment is a list of tokens which begins with a directive
 // and ends at the end of the directive (either at the end of
 // the line, or at the end of a block it opens).

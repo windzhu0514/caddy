@@ -28,6 +28,24 @@ import (
 	"github.com/caddyserver/certmagic"
 )
 
+// mapAddressToServerBlocks 返回一个map，保存了监听地址对应的服务配置块列表。
+// 每个服务配置块都会被展开单独进行分析，因为共享相同监听地址服务块的keys可以分组在一起，因此
+// 配置不需要重复。比如下面的Caddyfile有两个服务配置块。但是实际上有4个监听地址。这是因为bind
+// 指令会应用到服务配置块的每一个key，并且每个key都可能有不同的端口。并且我们绝对需要保证一个站点
+// 只能运行在一个监听地址上，这样会更加方便的处理：如果不同的地址意味着私有和公有，就会有潜在的安全风险。
+
+// 对与上面的例子，函数会遍历每个服务块，对于每个服务块，遍历服务块的keys。首先发现第一
+// 个服务块key example.com，确定了该服务块的监听地址为127.0.0.1:443，bind默认开启https。
+// 然后把监听地址和第一个服务块配置添加到map中。
+// 然后遍历第二个配置块的key,把它们关联到一个或多个监听地址。这个配置块里的每个key都有两个监听地址。当
+// 我们知道了哪个地址用来运行哪个key的服务时，我们就可以为每个包含服务配置块内容的地址创建一个新的服务配置，
+// 只有这些服务配置块的key可以使用这个地址。
+
+// 返回的map中有的key对应的服务配置块列表是相同的。这种情况出现在使用bind指令绑定了多个监听地址，
+// 并且监听地址不是和其他服务配置块共享的（或者其他服务配置块里token是相同的）。如例子中的
+//  1.2.3.4:443和1.2.3.4:9999只和第二个服务配置块一起使用。这种重复是不合理的，所以使用
+// consolidateAddrMappings函数把多个地址映射到相同的服务配置块列表（多对多映射）。这样做本质
+// 上是map-reduce技术
 // mapAddressToServerBlocks returns a map of listener address to list of server
 // blocks that will be served on that address. To do this, each server block is
 // expanded so that each one is considered individually, although keys of a

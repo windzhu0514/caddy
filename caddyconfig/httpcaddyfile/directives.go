@@ -92,6 +92,8 @@ func RegisterDirective(dir string, setupFunc UnmarshalFunc) {
 	registeredDirectives[dir] = setupFunc
 }
 
+// RegisterHandlerDirective 和RegisterDirective相似，但是用于那些输出确定是HTTP handler的指令。
+// 使用该方法注册的指令通常会有一个matcher作为可选的第一个参数
 // RegisterHandlerDirective is like RegisterDirective, but for
 // directives which specifically output only an HTTP handler.
 // Directives registered with this function will always have

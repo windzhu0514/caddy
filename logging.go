@@ -709,6 +709,7 @@ func newDefaultProductionLogEncoder(colorize bool) zapcore.Encoder {
 		// if interactive terminal, make output more human-readable by default
 		encCfg.EncodeTime = func(ts time.Time, encoder zapcore.PrimitiveArrayEncoder) {
 			encoder.AppendString(ts.UTC().Format("2006/01/02 15:04:05.000"))
+			//encoder.AppendString(ts.Format("2006/01/02 15:04:05.000"))
 		}
 		if colorize {
 			encCfg.EncodeLevel = zapcore.CapitalColorLevelEncoder

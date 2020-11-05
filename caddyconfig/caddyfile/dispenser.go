@@ -136,8 +136,8 @@ func (d *Dispenser) NextLine() bool {
 }
 
 // NextBlock 可以用作for循环的判断条件来加载下一个token，只要已经遍历到
-// 一个配置块，或者已经在一个不是初始化嵌套等级的嵌套配置块中。
-// 换句话说
+// 一个配置块，或者已经在一个大于初始化嵌套等级的嵌套配置块中。
+// 换句话说使用NextBlock可以遍历块中的所有token时并假设下一个token是个左大括号，直到匹配到右大括号。
 // NextBlock can be used as the condition of a for loop
 // to load the next token as long as it opens a block or
 // is already in a block nested more than initialNestingLevel.
@@ -183,7 +183,7 @@ func (d *Dispenser) NextBlock(initialNestingLevel int) bool {
 		d.cursor-- // roll back if not opening brace
 		return false
 	}
-	d.Next() // consume open curly brace
+	d.Next() // consume open curly brace 消耗掉左大括号
 	if d.Val() == "}" {
 		return false // open and then closed right away
 	}

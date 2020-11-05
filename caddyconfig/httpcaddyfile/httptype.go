@@ -1065,6 +1065,7 @@ func (st *ServerType) compileEncodedMatcherSets(sblock serverBlock) ([]caddy.Mod
 	return matcherSetsEnc, nil
 }
 
+// 解析出预定义的matcher处理模块
 func parseMatcherDefinitions(d *caddyfile.Dispenser, matchers map[string]caddy.ModuleMap) error {
 	for d.Next() {
 		definitionName := d.Val()
