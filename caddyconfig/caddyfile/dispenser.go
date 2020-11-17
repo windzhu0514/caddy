@@ -76,6 +76,11 @@ func (d *Dispenser) Prev() bool {
 	return false
 }
 
+// NextArg 加载同一行的并且不是左大括号下一个参数token。
+// 如果加载到一个参数token，返回true，否则返回false
+// 如果返回false，表示当前行的所有token都已处理。
+// 函数可以处理导入的token
+
 // NextArg loads the next token if it is on the same
 // line and if it is not a block opening (open curly
 // brace). Returns true if an argument token was

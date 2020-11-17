@@ -828,19 +828,24 @@ func appendSubrouteToRouteList(routeList caddyhttp.RouteList,
 	return routeList
 }
 
+// buildSubroute 把需要添加到路由的配置转换为干净且经过排序的子路由
+
 // buildSubroute turns the config values, which are expected to be routes
 // into a clean and orderly subroute that has all the routes within it.
 func buildSubroute(routes []ConfigValue, groupCounter counter) (*caddyhttp.Subroute, error) {
+	// 是否是指令排序列表里的指令
 	for _, val := range routes {
 		if !directiveIsOrdered(val.directive) {
 			return nil, fmt.Errorf("directive '%s' is not ordered, so it cannot be used here", val.directive)
 		}
 	}
 
+	// 路由排序
 	sortRoutes(routes)
 
 	subroute := new(caddyhttp.Subroute)
 
+	// 有些指令是互斥的
 	// some directives are mutually exclusive (only first matching
 	// instance should be evaluated); this is done by putting their
 	// routes in the same group

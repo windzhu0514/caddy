@@ -27,6 +27,11 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
 
+// directiveOrder 指定了http route中指令的排序顺序
+// root指令放在前面是因为rewrites或者redirects指令需要
+// 网站根目录的文件信息。
+// header指令在前面是因为可以在重定向前可以操作请求头
+
 // directiveOrder specifies the order
 // to apply directives in HTTP routes.
 //
@@ -80,6 +85,9 @@ func directiveIsOrdered(dir string) bool {
 	}
 	return false
 }
+
+// RegisterDirective 注册唯一的指令和其对应的反序列化函数。解析Caddyfile时，
+// 使用对应的反序列化函数解码遇到指令信息。
 
 // RegisterDirective registers a unique directive dir with an
 // associated unmarshaling (setup) function. When directive dir
@@ -269,6 +277,8 @@ func (h Helper) NewBindAddresses(addrs []string) []ConfigValue {
 	return []ConfigValue{{Class: "bind", Value: addrs}}
 }
 
+// ParseSegmentAsSubroute 解析segment，使其子指令被当作是一个指令，从而构建一个子路由
+
 // ParseSegmentAsSubroute parses the segment such that its subdirectives
 // are themselves treated as directives, from which a subroute is built
 // and returned.
@@ -347,6 +357,8 @@ func parseSegmentAsConfig(h Helper) ([]ConfigValue, error) {
 	return allResults, nil
 }
 
+// ConfigValue 表示一个添加到最终配置的值
+
 // ConfigValue represents a value to be added to the final
 // configuration, or a value to be consulted when building
 // the final configuration.
@@ -359,6 +371,7 @@ type ConfigValue struct {
 	// type-asserted and placed accordingly.
 	Class string
 
+	// 编译配置时使用的值。通常值的类型和Class名相关联
 	// The value to be used when building the config.
 	// Generally its type is associated with the
 	// name of the Class.
@@ -380,6 +393,7 @@ func sortRoutes(routes []ConfigValue) {
 			return dirPositions[iDir] < dirPositions[jDir]
 		}
 
+		// directives相同，如果只有一个路径匹配，按照路径长度来排序。
 		// directives are the same; sub-sort by path matcher length if there's
 		// only one matcher set and one path (this is a very common case and
 		// usually -- but not always -- helpful/expected, oh well; user can
