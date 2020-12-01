@@ -46,6 +46,7 @@ var directiveOrder = []string{
 	"root",
 
 	"header",
+	"request_body",
 
 	"redir",
 	"rewrite",
@@ -112,20 +113,11 @@ func RegisterHandlerDirective(dir string, setupFunc UnmarshalHandlerFunc) {
 			return nil, h.ArgErr()
 		}
 
-		matcherSet, ok, err := h.MatcherToken()
+		matcherSet, err := h.ExtractMatcherSet()
 		if err != nil {
 			return nil, err
 		}
-		if ok {
-			// strip matcher token; we don't need to
-			// use the return value here because a
-			// new dispenser should have been made
-			// solely for this directive's tokens,
-			// with no other uses of same slice
-			h.Dispenser.Delete()
-		}
 
-		h.Dispenser.Reset() // pretend this lookahead never happened
 		val, err := setupFunc(h)
 		if err != nil {
 			return nil, err
@@ -211,7 +203,12 @@ func (h Helper) ExtractMatcherSet() (caddy.ModuleMap, error) {
 		return nil, err
 	}
 	if hasMatcher {
-		h.Dispenser.Delete() // strip matcher token
+		// strip matcher token; we don't need to
+		// use the return value here because a
+		// new dispenser should have been made
+		// solely for this directive's tokens,
+		// with no other uses of same slice
+		h.Dispenser.Delete()
 	}
 	h.Dispenser.Reset() // pretend this lookahead never happened
 	return matcherSet, nil

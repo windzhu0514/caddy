@@ -1,7 +1,7 @@
-example.com
-
-import testdata/import_respond.txt Groot Rocket
-import testdata/import_respond.txt you "the confused man"
+localhost
+request_body {
+  max_size 1MB
+}
 ----------
 {
 	"apps": {
@@ -16,7 +16,7 @@ import testdata/import_respond.txt you "the confused man"
 							"match": [
 								{
 									"host": [
-										"example.com"
+										"localhost"
 									]
 								}
 							],
@@ -27,12 +27,8 @@ import testdata/import_respond.txt you "the confused man"
 										{
 											"handle": [
 												{
-													"body": "'I am Groot', hears Rocket",
-													"handler": "static_response"
-												},
-												{
-													"body": "'I am you', hears the confused man",
-													"handler": "static_response"
+													"handler": "request_body",
+													"max_size": 1000000
 												}
 											]
 										}

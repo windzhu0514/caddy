@@ -131,12 +131,15 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			if toURL.Scheme == "https" && urlPort == "80" {
 				return "", d.Err("upstream address has conflicting scheme (https://) and port (:80, the HTTP port)")
 			}
+			if toURL.Scheme == "h2c" && urlPort == "443" {
+				return "", d.Err("upstream address has conflicting scheme (h2c://) and port (:443, the HTTPS port)")
+			}
 
 			// if port is missing, attempt to infer from scheme
 			if toURL.Port() == "" {
 				var toPort string
 				switch toURL.Scheme {
-				case "", "http":
+				case "", "http", "h2c":
 					toPort = "80"
 				case "https":
 					toPort = "443"
@@ -480,6 +483,8 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				h.BufferRequests = true
 
 			case "header_up":
+				var err error
+
 				if h.Headers == nil {
 					h.Headers = new(headers.Handler)
 				}
@@ -487,18 +492,25 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					h.Headers.Request = new(headers.HeaderOps)
 				}
 				args := d.RemainingArgs()
+
 				switch len(args) {
 				case 1:
-					headers.CaddyfileHeaderOp(h.Headers.Request, args[0], "", "")
+					err = headers.CaddyfileHeaderOp(h.Headers.Request, args[0], "", "")
 				case 2:
-					headers.CaddyfileHeaderOp(h.Headers.Request, args[0], args[1], "")
+					err = headers.CaddyfileHeaderOp(h.Headers.Request, args[0], args[1], "")
 				case 3:
-					headers.CaddyfileHeaderOp(h.Headers.Request, args[0], args[1], args[2])
+					err = headers.CaddyfileHeaderOp(h.Headers.Request, args[0], args[1], args[2])
 				default:
 					return d.ArgErr()
 				}
 
+				if err != nil {
+					return d.Err(err.Error())
+				}
+
 			case "header_down":
+				var err error
+
 				if h.Headers == nil {
 					h.Headers = new(headers.Handler)
 				}
@@ -510,13 +522,17 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				args := d.RemainingArgs()
 				switch len(args) {
 				case 1:
-					headers.CaddyfileHeaderOp(h.Headers.Response.HeaderOps, args[0], "", "")
+					err = headers.CaddyfileHeaderOp(h.Headers.Response.HeaderOps, args[0], "", "")
 				case 2:
-					headers.CaddyfileHeaderOp(h.Headers.Response.HeaderOps, args[0], args[1], "")
+					err = headers.CaddyfileHeaderOp(h.Headers.Response.HeaderOps, args[0], args[1], "")
 				case 3:
-					headers.CaddyfileHeaderOp(h.Headers.Response.HeaderOps, args[0], args[1], args[2])
+					err = headers.CaddyfileHeaderOp(h.Headers.Response.HeaderOps, args[0], args[1], args[2])
 				default:
 					return d.ArgErr()
+				}
+
+				if err != nil {
+					return d.Err(err.Error())
 				}
 
 			case "transport":
@@ -552,8 +568,9 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	}
 
 	// if the scheme inferred from the backends' addresses is
-	// HTTPS, we will need a non-nil transport to enable TLS
-	if commonScheme == "https" && transport == nil {
+	// HTTPS, we will need a non-nil transport to enable TLS,
+	// or if H2C, to set the transport versions.
+	if (commonScheme == "https" || commonScheme == "h2c") && transport == nil {
 		transport = new(HTTPTransport)
 		transportModuleName = "http"
 	}
@@ -569,6 +586,9 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			}
 			if commonScheme == "http" && te.TLSEnabled() {
 				return d.Errf("upstream address scheme is HTTP but transport is configured for HTTP+TLS (HTTPS)")
+			}
+			if te, ok := transport.(*HTTPTransport); ok && commonScheme == "h2c" {
+				te.Versions = []string{"h2c", "2"}
 			}
 		} else if commonScheme == "https" {
 			return d.Errf("upstreams are configured for HTTPS but transport module does not support TLS: %T", transport)
