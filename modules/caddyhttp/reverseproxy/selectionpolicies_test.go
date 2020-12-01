@@ -28,25 +28,6 @@ func testPool() UpstreamPool {
 	}
 }
 
-func TestRandomSelection(t *testing.T) {
-	pool := testPool()
-	rrPolicy := new(RandomSelection)
-	req, _ := http.NewRequest("GET", "/", nil)
-
-	for i := 0; i < len(pool); i++ {
-		pool[i].MaxRequests=i
-	}
-
-	h:=rrPolicy.Select(pool,req)
-	if h == pool[0] {
-		t.Logf("select host is 0")
-	}else if h == pool[1]{
-		t.Logf("select host is 1")
-	}else if h == pool[2]{
-		t.Logf("select host is 2")
-	}
-}
-
 func TestRoundRobinPolicy(t *testing.T) {
 	pool := testPool()
 	rrPolicy := new(RoundRobinSelection)
