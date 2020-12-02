@@ -35,7 +35,12 @@ func init() {
 	caddy.RegisterModule(App{})
 }
 
-// App is a robust, production-ready HTTP server.
+// App 是一个强大的生产级的http服务
+// 如果使用了拥有合格名字的hostmatcher，则默认在所有的路由上启用https，
+// 证书会自动进行配置和更新。另外只监听HTTPS端口但是未配置TLS连接策略的服务
+// 会通过添加一个合适的默认的TLS连接策略从而自动启用https。
+// HTTP路由中可以使用一些占位符（用来替换*通配符）
+// App is a robust, production-ready HTTP server
 //
 // HTTPS is enabled by default if host matchers with qualifying names are used
 // in any of routes; certificates are automatically provisioned and renewed.

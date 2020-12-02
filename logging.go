@@ -503,6 +503,8 @@ func (cl *CustomLog) matchesModule(moduleID string) bool {
 	return cl.loggerAllowed(moduleID, true)
 }
 
+// 如果允许name记录日志，loggerAllowed 返回true。
+// 如果name是一个模块的名字或者想要知道是否允许该模块记录日志，isModule参数为true。
 // loggerAllowed returns true if name is allowed to emit
 // to cl. isModule should be true if name is the name of
 // a module and you want to see if ANY of that module's

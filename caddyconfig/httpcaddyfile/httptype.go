@@ -255,6 +255,8 @@ func (st ServerType) Setup(inputServerBlocks []caddyfile.ServerBlock,
 	if len(httpApp.Servers) > 0 {
 		cfg.AppsRaw["http"] = caddyconfig.JSON(httpApp, &warnings)
 	}
+
+	// 这种写法判断结构体是不是默认值
 	if !reflect.DeepEqual(tlsApp, &caddytls.TLS{CertificatesRaw: make(caddy.ModuleMap)}) {
 		cfg.AppsRaw["tls"] = caddyconfig.JSON(tlsApp, &warnings)
 	}
@@ -277,6 +279,9 @@ func (st ServerType) Setup(inputServerBlocks []caddyfile.ServerBlock,
 			if ncl.name != "" {
 				cfg.Logging.Logs[ncl.name] = ncl.log
 			}
+
+			// 创建默认日志，添加默认日志的例外日志名。
+			// 写入文件的http访问日志或者在配置里定制过的日志不写入默认日志。
 			// most users seem to prefer not writing access logs
 			// to the default log when they are directed to a
 			// file or have any other special customization
@@ -981,6 +986,7 @@ func buildSubroute(routes []ConfigValue, groupCounter counter) (*caddyhttp.Subro
 	return subroute, nil
 }
 
+// consolidateRoutes合并相邻的有相同属性的route，使整体的输出更加简洁。
 // consolidateRoutes combines routes with the same properties
 // (same matchers, same Terminal and Group settings) for a
 // cleaner overall output.

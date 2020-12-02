@@ -89,6 +89,7 @@ type Route struct {
 	// If you think of routes in this way, it will be easy and even fun to solve the puzzle of writing correct routes.
 	HandlersRaw []json.RawMessage `json:"handle,omitempty" caddy:"namespace=http.handlers inline_key=handler"`
 
+	// 是否是最终的路由，后续的路由不再执行
 	// If true, no more routes will be executed after this one.
 	Terminal bool `json:"terminal,omitempty"`
 
