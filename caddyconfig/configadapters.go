@@ -35,9 +35,14 @@ type Warning struct {
 	Message   string `json:"message,omitempty"`
 }
 
-// JSON 把接口值编码为json格式，以json.RawMessage类型返回。
-// 任何序列化错误（正确的代码几乎不会出现错误）都被转换到warnings切片里。
-// 这种方式在需要json.RawMessage类型填充配置结构体时很方便，不用考虑出现的错误。
+func (w Warning) String() string {
+	var directive string
+	if w.Directive != "" {
+		directive = fmt.Sprintf(" (%s)", w.Directive)
+	}
+	return fmt.Sprintf("%s:%d%s: %s", w.File, w.Line, directive, w.Message)
+}
+
 // JSON encodes val as JSON, returning it as a json.RawMessage. Any
 // marshaling errors (which are highly unlikely with correct code)
 // are converted to warnings. This is convenient when filling config
@@ -100,12 +105,6 @@ func JSONModuleObject(val interface{}, fieldName, fieldVal string, warnings *[]W
 	}
 
 	return result
-}
-
-// JSONIndent is used to JSON-marshal the final resulting Caddy
-// configuration in a consistent, human-readable way.
-func JSONIndent(val interface{}) ([]byte, error) {
-	return json.MarshalIndent(val, "", "\t")
 }
 
 // RegisterAdapter registers a config adapter with the given name.

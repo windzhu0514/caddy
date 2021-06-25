@@ -397,6 +397,9 @@ func TestPathREMatcher(t *testing.T) {
 }
 
 func TestHeaderMatcher(t *testing.T) {
+	repl := caddy.NewReplacer()
+	repl.Set("a", "foobar")
+
 	for i, tc := range []struct {
 		match  MatchHeader
 		input  http.Header // make sure these are canonical cased (std lib will do that in a real request)
@@ -490,8 +493,26 @@ func TestHeaderMatcher(t *testing.T) {
 			input:  http.Header{"Must-Not-Exist": []string{"do not match"}},
 			expect: false,
 		},
+		{
+			match:  MatchHeader{"Foo": []string{"{a}"}},
+			input:  http.Header{"Foo": []string{"foobar"}},
+			expect: true,
+		},
+		{
+			match:  MatchHeader{"Foo": []string{"{a}"}},
+			input:  http.Header{"Foo": []string{"asdf"}},
+			expect: false,
+		},
+		{
+			match:  MatchHeader{"Foo": []string{"{a}*"}},
+			input:  http.Header{"Foo": []string{"foobar-baz"}},
+			expect: true,
+		},
 	} {
 		req := &http.Request{Header: tc.input, Host: tc.host}
+		ctx := context.WithValue(req.Context(), caddy.ReplacerCtxKey, repl)
+		req = req.WithContext(ctx)
+
 		actual := tc.match.Match(req)
 		if actual != tc.expect {
 			t.Errorf("Test %d %v: Expected %t, got %t for '%s'", i, tc.match, tc.expect, actual, tc.input)
@@ -671,6 +692,32 @@ func TestHeaderREMatcher(t *testing.T) {
 	}
 }
 
+func BenchmarkHeaderREMatcher(b *testing.B) {
+
+	i := 0
+	match := MatchHeaderRE{"Field": &MatchRegexp{Pattern: "^foo(.*)$", Name: "name"}}
+	input := http.Header{"Field": []string{"foobar"}}
+	var host string
+	err := match.Provision(caddy.Context{})
+	if err != nil {
+		b.Errorf("Test %d %v: Provisioning: %v", i, match, err)
+	}
+	err = match.Validate()
+	if err != nil {
+		b.Errorf("Test %d %v: Validating: %v", i, match, err)
+	}
+
+	// set up the fake request and its Replacer
+	req := &http.Request{Header: input, URL: new(url.URL), Host: host}
+	repl := caddy.NewReplacer()
+	ctx := context.WithValue(req.Context(), caddy.ReplacerCtxKey, repl)
+	req = req.WithContext(ctx)
+	addHTTPVarsToReplacer(repl, req, httptest.NewRecorder())
+	for run := 0; run < b.N; run++ {
+		match.Match(req)
+	}
+}
+
 func TestVarREMatcher(t *testing.T) {
 	for i, tc := range []struct {
 		desc       string
@@ -754,155 +801,6 @@ func TestVarREMatcher(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestResponseMatcher(t *testing.T) {
-	for i, tc := range []struct {
-		require ResponseMatcher
-		status  int
-		hdr     http.Header // make sure these are canonical cased (std lib will do that in a real request)
-		expect  bool
-	}{
-		{
-			require: ResponseMatcher{},
-			status:  200,
-			expect:  true,
-		},
-		{
-			require: ResponseMatcher{
-				StatusCode: []int{200},
-			},
-			status: 200,
-			expect: true,
-		},
-		{
-			require: ResponseMatcher{
-				StatusCode: []int{2},
-			},
-			status: 200,
-			expect: true,
-		},
-		{
-			require: ResponseMatcher{
-				StatusCode: []int{201},
-			},
-			status: 200,
-			expect: false,
-		},
-		{
-			require: ResponseMatcher{
-				StatusCode: []int{2},
-			},
-			status: 301,
-			expect: false,
-		},
-		{
-			require: ResponseMatcher{
-				StatusCode: []int{3},
-			},
-			status: 301,
-			expect: true,
-		},
-		{
-			require: ResponseMatcher{
-				StatusCode: []int{3},
-			},
-			status: 399,
-			expect: true,
-		},
-		{
-			require: ResponseMatcher{
-				StatusCode: []int{3},
-			},
-			status: 400,
-			expect: false,
-		},
-		{
-			require: ResponseMatcher{
-				StatusCode: []int{3, 4},
-			},
-			status: 400,
-			expect: true,
-		},
-		{
-			require: ResponseMatcher{
-				StatusCode: []int{3, 401},
-			},
-			status: 401,
-			expect: true,
-		},
-		{
-			require: ResponseMatcher{
-				Headers: http.Header{
-					"Foo": []string{"bar"},
-				},
-			},
-			hdr:    http.Header{"Foo": []string{"bar"}},
-			expect: true,
-		},
-		{
-			require: ResponseMatcher{
-				Headers: http.Header{
-					"Foo2": []string{"bar"},
-				},
-			},
-			hdr:    http.Header{"Foo": []string{"bar"}},
-			expect: false,
-		},
-		{
-			require: ResponseMatcher{
-				Headers: http.Header{
-					"Foo": []string{"bar", "baz"},
-				},
-			},
-			hdr:    http.Header{"Foo": []string{"baz"}},
-			expect: true,
-		},
-		{
-			require: ResponseMatcher{
-				Headers: http.Header{
-					"Foo":  []string{"bar"},
-					"Foo2": []string{"baz"},
-				},
-			},
-			hdr:    http.Header{"Foo": []string{"baz"}},
-			expect: false,
-		},
-		{
-			require: ResponseMatcher{
-				Headers: http.Header{
-					"Foo":  []string{"bar"},
-					"Foo2": []string{"baz"},
-				},
-			},
-			hdr:    http.Header{"Foo": []string{"bar"}, "Foo2": []string{"baz"}},
-			expect: true,
-		},
-		{
-			require: ResponseMatcher{
-				Headers: http.Header{
-					"Foo": []string{"foo*"},
-				},
-			},
-			hdr:    http.Header{"Foo": []string{"foobar"}},
-			expect: true,
-		},
-		{
-			require: ResponseMatcher{
-				Headers: http.Header{
-					"Foo": []string{"foo*"},
-				},
-			},
-			hdr:    http.Header{"Foo": []string{"foobar"}},
-			expect: true,
-		},
-	} {
-		actual := tc.require.Match(tc.status, tc.hdr)
-		if actual != tc.expect {
-			t.Errorf("Test %d %v: Expected %t, got %t for HTTP %d %v", i, tc.require, tc.expect, actual, tc.status, tc.hdr)
-			continue
-		}
 	}
 }
 
@@ -1016,6 +914,33 @@ func TestNotMatcher(t *testing.T) {
 			t.Errorf("Test %d %+v: Expected %t, got %t for: host=%s path=%s'", i, tc.match, tc.expect, actual, tc.host, tc.path)
 			continue
 		}
+	}
+}
+func BenchmarkLargeHostMatcher(b *testing.B) {
+	// this benchmark simulates a large host matcher (thousands of entries) where each
+	// value is an exact hostname (not a placeholder or wildcard) - compare the results
+	// of this with and without the binary search (comment out the various fast path
+	// sections in Match) to conduct experiments
+
+	const n = 10000
+	lastHost := fmt.Sprintf("%d.example.com", n-1)
+	req := &http.Request{Host: lastHost}
+	repl := caddy.NewReplacer()
+	ctx := context.WithValue(req.Context(), caddy.ReplacerCtxKey, repl)
+	req = req.WithContext(ctx)
+
+	matcher := make(MatchHost, n)
+	for i := 0; i < n; i++ {
+		matcher[i] = fmt.Sprintf("%d.example.com", i)
+	}
+	err := matcher.Provision(caddy.Context{})
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		matcher.Match(req)
 	}
 }
 

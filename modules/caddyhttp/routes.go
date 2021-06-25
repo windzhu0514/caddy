@@ -221,7 +221,11 @@ func wrapRoute(route Route) Middleware {
 
 			// make terminal routes terminate
 			if route.Terminal {
-				nextCopy = emptyHandler
+				if _, ok := req.Context().Value(ErrorCtxKey).(error); ok {
+					nextCopy = errorEmptyHandler
+				} else {
+					nextCopy = emptyHandler
+				}
 			}
 
 			// compile this route's handler stack

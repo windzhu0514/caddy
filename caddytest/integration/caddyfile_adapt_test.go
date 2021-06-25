@@ -1,7 +1,10 @@
 package integration
 
 import (
+	jsonMod "encoding/json"
+	"fmt"
 	"io/ioutil"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -32,14 +35,19 @@ func TestCaddyfileAdaptToJSON(t *testing.T) {
 		}
 
 		// split the Caddyfile (first) and JSON (second) parts
+		// (append newline to Caddyfile to match formatter expectations)
 		parts := strings.Split(string(data), "----------")
-		caddyfile, json := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		caddyfile, json := strings.TrimSpace(parts[0])+"\n", strings.TrimSpace(parts[1])
 
 		// replace windows newlines in the json with unix newlines
 		json = winNewlines.ReplaceAllString(json, "\n")
 
+		// replace os-specific default path for file_server's hide field
+		replacePath, _ := jsonMod.Marshal(fmt.Sprint(".", string(filepath.Separator), "Caddyfile"))
+		json = strings.ReplaceAll(json, `"./Caddyfile"`, string(replacePath))
+
 		// run the test
-		ok := caddytest.CompareAdapt(t, caddyfile, "caddyfile", json)
+		ok := caddytest.CompareAdapt(t, filename, caddyfile, "caddyfile", json)
 		if !ok {
 			t.Errorf("failed to adapt %s", filename)
 		}

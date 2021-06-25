@@ -198,6 +198,35 @@ func TestIPHashPolicy(t *testing.T) {
 	if h != nil {
 		t.Error("Expected ip hash policy host to be nil.")
 	}
+
+	// Reproduce #4135
+	pool = UpstreamPool{
+		{Host: new(upstreamHost)},
+		{Host: new(upstreamHost)},
+		{Host: new(upstreamHost)},
+		{Host: new(upstreamHost)},
+		{Host: new(upstreamHost)},
+		{Host: new(upstreamHost)},
+		{Host: new(upstreamHost)},
+		{Host: new(upstreamHost)},
+		{Host: new(upstreamHost)},
+	}
+	pool[0].SetHealthy(false)
+	pool[1].SetHealthy(false)
+	pool[2].SetHealthy(false)
+	pool[3].SetHealthy(false)
+	pool[4].SetHealthy(false)
+	pool[5].SetHealthy(false)
+	pool[6].SetHealthy(false)
+	pool[7].SetHealthy(false)
+	pool[8].SetHealthy(true)
+
+	// We should get a result back when there is one healthy host left.
+	h = ipHash.Select(pool, req, nil)
+	if h == nil {
+		// If it is nil, it means we missed a host even though one is available
+		t.Error("Expected ip hash policy host to not be nil, but it is nil.")
+	}
 }
 
 func TestFirstPolicy(t *testing.T) {
@@ -335,11 +364,11 @@ func TestCookieHashPolicy(t *testing.T) {
 	w := httptest.NewRecorder()
 	cookieHashPolicy := new(CookieHashSelection)
 	h := cookieHashPolicy.Select(pool, request, w)
-	cookie_server1 := w.Result().Cookies()[0]
-	if cookie_server1 == nil {
-		t.Error("cookieHashPolicy should set a cookie")
+	cookieServer1 := w.Result().Cookies()[0]
+	if cookieServer1 == nil {
+		t.Fatal("cookieHashPolicy should set a cookie")
 	}
-	if cookie_server1.Name != "lb" {
+	if cookieServer1.Name != "lb" {
 		t.Error("cookieHashPolicy should set a cookie with name lb")
 	}
 	if h != pool[0] {
@@ -349,7 +378,7 @@ func TestCookieHashPolicy(t *testing.T) {
 	pool[2].SetHealthy(true)
 	request = httptest.NewRequest(http.MethodGet, "/test", nil)
 	w = httptest.NewRecorder()
-	request.AddCookie(cookie_server1)
+	request.AddCookie(cookieServer1)
 	h = cookieHashPolicy.Select(pool, request, w)
 	if h != pool[0] {
 		t.Error("Expected cookieHashPolicy host to stick to the first host (matching cookie).")
@@ -361,7 +390,7 @@ func TestCookieHashPolicy(t *testing.T) {
 	pool[0].SetHealthy(false)
 	request = httptest.NewRequest(http.MethodGet, "/test", nil)
 	w = httptest.NewRecorder()
-	request.AddCookie(cookie_server1)
+	request.AddCookie(cookieServer1)
 	h = cookieHashPolicy.Select(pool, request, w)
 	if h == pool[0] {
 		t.Error("Expected cookieHashPolicy to select a new host.")

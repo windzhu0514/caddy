@@ -222,8 +222,8 @@ func (r *RoundRobinSelection) Select(pool UpstreamPool, _ *http.Request, _ http.
 		return nil
 	}
 	for i := uint32(0); i < n; i++ {
-		atomic.AddUint32(&r.robin, 1)
-		host := pool[r.robin%n]
+		robin := atomic.AddUint32(&r.robin, 1)
+		host := pool[robin%n]
 		if host.Available() {
 			return host
 		}
@@ -402,17 +402,16 @@ func (s CookieHashSelection) Select(pool UpstreamPool, req *http.Request, w http
 	// If there's no cookie, select new random host
 	if err != nil || cookie == nil {
 		return selectNewHostWithCookieHashSelection(pool, w, s.Secret, s.Name)
-	} else {
-		// If the cookie is present, loop over the available upstreams until we find a match
-		cookieValue := cookie.Value
-		for _, upstream := range pool {
-			if !upstream.Available() {
-				continue
-			}
-			sha, err := hashCookie(s.Secret, upstream.Dial)
-			if err == nil && sha == cookieValue {
-				return upstream
-			}
+	}
+	// If the cookie is present, loop over the available upstreams until we find a match
+	cookieValue := cookie.Value
+	for _, upstream := range pool {
+		if !upstream.Available() {
+			continue
+		}
+		sha, err := hashCookie(s.Secret, upstream.Dial)
+		if err == nil && sha == cookieValue {
+			return upstream
 		}
 	}
 	// If there is no matching host, select new random host
@@ -447,7 +446,7 @@ func selectNewHostWithCookieHashSelection(pool []*Upstream, w http.ResponseWrite
 		sha, err := hashCookie(cookieSecret, randomHost.Dial)
 		if err == nil {
 			// write the cookie.
-			http.SetCookie(w, &http.Cookie{Name: cookieName, Value: sha, Secure: false})
+			http.SetCookie(w, &http.Cookie{Name: cookieName, Value: sha, Path: "/", Secure: false})
 		}
 	}
 	return randomHost
@@ -525,8 +524,7 @@ func hostByHashing(pool []*Upstream, s string) *Upstream {
 	}
 	index := hash(s) % poolLen
 	for i := uint32(0); i < poolLen; i++ {
-		index += i
-		upstream := pool[index%poolLen]
+		upstream := pool[(index+i)%poolLen]
 		if upstream.Available() {
 			return upstream
 		}

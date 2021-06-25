@@ -23,6 +23,8 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/caddyserver/caddy/v2"
@@ -51,6 +53,8 @@ type (
 	//
 	// The wildcard can be useful for matching all subdomains, for example:
 	// `*.example.com` matches `foo.example.com` but not `foo.bar.example.com`.
+	//
+	// Duplicate entries will return an error.
 	MatchHost []string
 
 	// MatchPath matches requests by the URI's path (case-insensitive). Path
@@ -103,7 +107,14 @@ type (
 
 	// MatchRemoteIP matches requests by client IP (or CIDR range).
 	MatchRemoteIP struct {
+		// The IPs or CIDR ranges to match.
 		Ranges []string `json:"ranges,omitempty"`
+
+		// If true, prefer the first IP in the request's X-Forwarded-For
+		// header, if present, rather than the immediate peer's IP, as
+		// the reference IP against which to match. Note that it is easy
+		// to spoof request headers. Default: false
+		Forwarded bool `json:"forwarded,omitempty"`
 
 		cidrs  []*net.IPNet
 		logger *zap.Logger
@@ -167,6 +178,40 @@ func (m *MatchHost) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	return nil
 }
 
+// Provision sets up and validates m, including making it more efficient for large lists.
+func (m MatchHost) Provision(_ caddy.Context) error {
+	// check for duplicates; they are nonsensical and reduce efficiency
+	// (we could just remove them, but the user should know their config is erroneous)
+	seen := make(map[string]int)
+	for i, h := range m {
+		h = strings.ToLower(h)
+		if firstI, ok := seen[h]; ok {
+			return fmt.Errorf("host at index %d is repeated at index %d: %s", firstI, i, h)
+		}
+		seen[h] = i
+	}
+
+	if m.large() {
+		// sort the slice lexicographically, grouping "fuzzy" entries (wildcards and placeholders)
+		// at the front of the list; this allows us to use binary search for exact matches, which
+		// we have seen from experience is the most common kind of value in large lists; and any
+		// other kinds of values (wildcards and placeholders) are grouped in front so the linear
+		// search should find a match fairly quickly
+		sort.Slice(m, func(i, j int) bool {
+			iInexact, jInexact := m.fuzzy(m[i]), m.fuzzy(m[j])
+			if iInexact && !jInexact {
+				return true
+			}
+			if !iInexact && jInexact {
+				return false
+			}
+			return m[i] < m[j]
+		})
+	}
+
+	return nil
+}
+
 // Match returns true if r matches m.
 func (m MatchHost) Match(r *http.Request) bool {
 	reqHost, _, err := net.SplitHostPort(r.Host)
@@ -179,10 +224,31 @@ func (m MatchHost) Match(r *http.Request) bool {
 		reqHost = strings.TrimSuffix(reqHost, "]")
 	}
 
+	if m.large() {
+		// fast path: locate exact match using binary search (about 100-1000x faster for large lists)
+		pos := sort.Search(len(m), func(i int) bool {
+			if m.fuzzy(m[i]) {
+				return false
+			}
+			return m[i] >= reqHost
+		})
+		if pos < len(m) && m[pos] == reqHost {
+			return true
+		}
+	}
+
 	repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
 
 outer:
 	for _, host := range m {
+		// fast path: if matcher is large, we already know we don't have an exact
+		// match, so we're only looking for fuzzy match now, which should be at the
+		// front of the list; if we have reached a value that is not fuzzy, there
+		// will be no match and we can short-circuit for efficiency
+		if m.large() && !m.fuzzy(host) {
+			break
+		}
+
 		host = repl.ReplaceAll(host, "")
 		if strings.Contains(host, "*") {
 			patternParts := strings.Split(host, ".")
@@ -206,6 +272,15 @@ outer:
 
 	return false
 }
+
+// fuzzy returns true if the given hostname h is not a specific
+// hostname, e.g. has placeholders or wildcards.
+func (MatchHost) fuzzy(h string) bool { return strings.ContainsAny(h, "{*") }
+
+// large returns true if m is considered to be large. Optimizing
+// the matcher for smaller lists has diminishing returns.
+// See related benchmark function in test file to conduct experiments.
+func (m MatchHost) large() bool { return len(m) > 100 }
 
 // CaddyModule returns the Caddy module information.
 func (MatchPath) CaddyModule() caddy.ModuleInfo {
@@ -403,13 +478,32 @@ func (m *MatchHeader) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	}
 	for d.Next() {
 		var field, val string
-		if !d.Args(&field, &val) {
-			return d.Errf("malformed header matcher: expected both field and value")
+		if !d.Args(&field) {
+			return d.Errf("malformed header matcher: expected field")
 		}
 
-		// If multiple header matchers with the same header field are defined,
-		// we want to add the existing to the list of headers (will be OR'ed)
-		http.Header(*m).Add(field, val)
+		if strings.HasPrefix(field, "!") {
+			if len(field) == 1 {
+				return d.Errf("malformed header matcher: must have field name following ! character")
+			}
+
+			field = field[1:]
+			headers := *m
+			headers[field] = nil
+			m = &headers
+			if d.NextArg() {
+				return d.Errf("malformed header matcher: null matching headers cannot have a field value")
+			}
+		} else {
+			if !d.NextArg() {
+				return d.Errf("malformed header matcher: expected both field and value")
+			}
+
+			// If multiple header matchers with the same header field are defined,
+			// we want to add the existing to the list of headers (will be OR'ed)
+			val = d.Val()
+			http.Header(*m).Add(field, val)
+		}
 
 		if d.NextBlock(0) {
 			return d.Err("malformed header matcher: blocks are not supported")
@@ -420,7 +514,8 @@ func (m *MatchHeader) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 
 // Match returns true if r matches m.
 func (m MatchHeader) Match(r *http.Request) bool {
-	return matchHeaders(r.Header, http.Header(m), r.Host)
+	repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
+	return matchHeaders(r.Header, http.Header(m), r.Host, repl)
 }
 
 // getHeaderFieldVals returns the field values for the given fieldName from input.
@@ -437,7 +532,7 @@ func getHeaderFieldVals(input http.Header, fieldName, host string) []string {
 // matchHeaders returns true if input matches the criteria in against without regex.
 // The host parameter should be obtained from the http.Request.Host field since
 // net/http removes it from the header map.
-func matchHeaders(input, against http.Header, host string) bool {
+func matchHeaders(input, against http.Header, host string, repl *caddy.Replacer) bool {
 	for field, allowedFieldVals := range against {
 		actualFieldVals := getHeaderFieldVals(input, field, host)
 		if allowedFieldVals != nil && len(allowedFieldVals) == 0 && actualFieldVals != nil {
@@ -453,6 +548,9 @@ func matchHeaders(input, against http.Header, host string) bool {
 	fieldVals:
 		for _, actualFieldVal := range actualFieldVals {
 			for _, allowedFieldVal := range allowedFieldVals {
+				if repl != nil {
+					allowedFieldVal = repl.ReplaceAll(allowedFieldVal, "")
+				}
 				switch {
 				case allowedFieldVal == "*":
 					match = true
@@ -706,7 +804,16 @@ func (MatchRemoteIP) CaddyModule() caddy.ModuleInfo {
 // UnmarshalCaddyfile implements caddyfile.Unmarshaler.
 func (m *MatchRemoteIP) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	for d.Next() {
-		m.Ranges = append(m.Ranges, d.RemainingArgs()...)
+		for d.NextArg() {
+			if d.Val() == "forwarded" {
+				if len(m.Ranges) > 0 {
+					return d.Err("if used, 'forwarded' must be first argument")
+				}
+				m.Forwarded = true
+				continue
+			}
+			m.Ranges = append(m.Ranges, d.Val())
+		}
 		if d.NextBlock(0) {
 			return d.Err("malformed remote_ip matcher: blocks are not supported")
 		}
@@ -740,24 +847,20 @@ func (m *MatchRemoteIP) Provision(ctx caddy.Context) error {
 }
 
 func (m MatchRemoteIP) getClientIP(r *http.Request) (net.IP, error) {
-	var remote string
-	if fwdFor := r.Header.Get("X-Forwarded-For"); fwdFor != "" {
-		remote = strings.TrimSpace(strings.Split(fwdFor, ",")[0])
+	remote := r.RemoteAddr
+	if m.Forwarded {
+		if fwdFor := r.Header.Get("X-Forwarded-For"); fwdFor != "" {
+			remote = strings.TrimSpace(strings.Split(fwdFor, ",")[0])
+		}
 	}
-	if remote == "" {
-		remote = r.RemoteAddr
-	}
-
 	ipStr, _, err := net.SplitHostPort(remote)
 	if err != nil {
 		ipStr = remote // OK; probably didn't have a port
 	}
-
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
 		return nil, fmt.Errorf("invalid client IP address: %s", ipStr)
 	}
-
 	return ip, nil
 }
 
@@ -833,14 +936,14 @@ func (mre *MatchRegexp) Match(input string, repl *caddy.Replacer) bool {
 
 	// save all capture groups, first by index
 	for i, match := range matches {
-		key := fmt.Sprintf("%s.%d", mre.phPrefix, i)
+		key := mre.phPrefix + "." + strconv.Itoa(i)
 		repl.Set(key, match)
 	}
 
 	// then by name
 	for i, name := range mre.compiled.SubexpNames() {
 		if i != 0 && name != "" {
-			key := fmt.Sprintf("%s.%s", mre.phPrefix, name)
+			key := mre.phPrefix + "." + name
 			repl.Set(key, matches[i])
 		}
 	}
@@ -868,40 +971,6 @@ func (mre *MatchRegexp) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	return nil
 }
 
-// ResponseMatcher is a type which can determine if an
-// HTTP response matches some criteria.
-type ResponseMatcher struct {
-	// If set, one of these status codes would be required.
-	// A one-digit status can be used to represent all codes
-	// in that class (e.g. 3 for all 3xx codes).
-	StatusCode []int `json:"status_code,omitempty"`
-
-	// If set, each header specified must be one of the
-	// specified values, with the same logic used by the
-	// request header matcher.
-	Headers http.Header `json:"headers,omitempty"`
-}
-
-// Match returns true if the given statusCode and hdr match rm.
-func (rm ResponseMatcher) Match(statusCode int, hdr http.Header) bool {
-	if !rm.matchStatusCode(statusCode) {
-		return false
-	}
-	return matchHeaders(hdr, rm.Headers, "")
-}
-
-func (rm ResponseMatcher) matchStatusCode(statusCode int) bool {
-	if rm.StatusCode == nil {
-		return true
-	}
-	for _, code := range rm.StatusCode {
-		if StatusCodeMatches(statusCode, code) {
-			return true
-		}
-	}
-	return false
-}
-
 var wordRE = regexp.MustCompile(`\w+`)
 
 const regexpPlaceholderPrefix = "http.regexp"
@@ -909,6 +978,7 @@ const regexpPlaceholderPrefix = "http.regexp"
 // Interface guards
 var (
 	_ RequestMatcher    = (*MatchHost)(nil)
+	_ caddy.Provisioner = (*MatchHost)(nil)
 	_ RequestMatcher    = (*MatchPath)(nil)
 	_ RequestMatcher    = (*MatchPathRE)(nil)
 	_ caddy.Provisioner = (*MatchPathRE)(nil)

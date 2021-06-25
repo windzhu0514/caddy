@@ -94,7 +94,7 @@ func TestFileMatcher(t *testing.T) {
 			t.Fatalf("Test %d: actual path: %v, expected: %v", i, rel, tc.expectedPath)
 		}
 
-		fileType, ok := repl.Get("http.matchers.file.type")
+		fileType, _ := repl.Get("http.matchers.file.type")
 		if fileType != tc.expectedType {
 			t.Fatalf("Test %d: actual file type: %v, expected: %v", i, fileType, tc.expectedType)
 		}
@@ -197,7 +197,7 @@ func TestPHPFileMatcher(t *testing.T) {
 			t.Fatalf("Test %d: actual path: %v, expected: %v", i, rel, tc.expectedPath)
 		}
 
-		fileType, ok := repl.Get("http.matchers.file.type")
+		fileType, _ := repl.Get("http.matchers.file.type")
 		if fileType != tc.expectedType {
 			t.Fatalf("Test %d: actual file type: %v, expected: %v", i, fileType, tc.expectedType)
 		}
@@ -206,9 +206,13 @@ func TestPHPFileMatcher(t *testing.T) {
 
 func TestFirstSplit(t *testing.T) {
 	m := MatchFile{SplitPath: []string{".php"}}
-	actual := m.firstSplit("index.PHP/somewhere")
+	actual, remainder := m.firstSplit("index.PHP/somewhere")
 	expected := "index.PHP"
+	expectedRemainder := "/somewhere"
 	if actual != expected {
-		t.Errorf("Expected %s but got %s", expected, actual)
+		t.Errorf("Expected split %s but got %s", expected, actual)
+	}
+	if remainder != expectedRemainder {
+		t.Errorf("Expected remainder %s but got %s", expectedRemainder, remainder)
 	}
 }

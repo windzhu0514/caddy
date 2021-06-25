@@ -38,9 +38,11 @@ type (
 
 	// Token represents a single parsable unit.
 	Token struct {
-		File string
-		Line int
-		Text string
+		File        string
+		Line        int
+		Text        string
+		inSnippet   bool
+		snippetName string
 	}
 )
 

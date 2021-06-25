@@ -9,7 +9,7 @@
 	}
 	acme_ca https://example.com
 	acme_eab {
-		key_id  4K2scIVbBpNd-78scadB2g
+		key_id 4K2scIVbBpNd-78scadB2g
 		mac_key abcdefghijklmnopqrstuvwx-abcdefghijklnopqrstuvwxyz12ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh
 	}
 	acme_ca_root /path/to/ca.crt
@@ -20,6 +20,7 @@
 		interval 30s
 		burst 20
 	}
+	storage_clean_interval 7d
 
 	key_type ed25519
 }
@@ -80,7 +81,8 @@
 						"burst": 20
 					},
 					"ask": "https://example.com"
-				}
+				},
+				"storage_clean_interval": 604800000000000
 			}
 		}
 	}

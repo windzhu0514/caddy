@@ -6,9 +6,11 @@ on:
   push:
     branches:
       - master
+      - 2.*
   pull_request:
     branches:
       - master
+      - 2.*
 
 jobs:
   test:
@@ -17,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
-        go: [ '1.14', '1.15' ]
+        go: [ '1.15', '1.16' ]
 
         # Set some variables per OS, usable via ${{ matrix.VAR }}
         # CADDY_BIN_PATH: the path to the compiled Caddy binary, for artifact publishing
@@ -64,6 +66,7 @@ jobs:
         go env
         printf "\n\nSystem environment:\n\n"
         env
+        printf "Git version: $(git version)\n\n"
         # Calculate the short SHA1 hash of the git commit
         echo "::set-output name=short_sha::$(git rev-parse --short HEAD)"
         echo "::set-output name=go_cache::$(go env GOCACHE)"
@@ -137,7 +140,7 @@ jobs:
 
           # The environment is fresh, so there's no point in keeping accepting and adding the key.
           rsync -arz -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" --progress --delete --exclude '.git' . caddy-ci@ci-s390x.caddyserver.com:/var/tmp/"$short_sha"
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -t caddy-ci@ci-s390x.caddyserver.com "cd /var/tmp/$short_sha; CGO_ENABLED=0 /usr/local/go/bin/go test -v ./..."
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -t caddy-ci@ci-s390x.caddyserver.com "cd /var/tmp/$short_sha; go version; go env; printf "\n\n";CGO_ENABLED=0 go test -v ./..."
           test_result=$?
 
           # There's no need leaving the files around
